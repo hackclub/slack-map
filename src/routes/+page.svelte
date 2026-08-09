@@ -17,52 +17,52 @@
 		{
 			key: 'community',
 			label: 'Community',
-			fill: '#475a88',
-			stroke: '#56a4eb',
-			path: 'M175 78C136 90 104 118 88 152C74 182 76 217 76 250C76 286 74 321 90 353C106 385 135 412 168 425C206 440 249 438 287 428C327 417 367 397 396 367C424 338 442 299 445 260C448 220 442 179 420 148C397 116 361 103 325 94C295 87 272 75 243 72C220 70 196 72 175 78Z',
+			fill: '#4a7ba7',
+			stroke: '#7aa8d1',
+			path: 'M100 140L115 110L135 120L145 95L165 105L175 85L195 100L210 75L230 110L245 135L255 165L260 200L255 235L235 255L200 260L160 255L125 245L95 225L80 190L85 155Z',
 			labelX: '10',
-			labelY: '20',
+			labelY: '22',
 			labelWidth: '18'
 		},
 		{
 			key: 'ysws',
 			label: 'YSWS!',
-			fill: '#2b684b',
-			stroke: '#63b48a',
-			path: 'M552 90C517 97 492 120 481 151C469 185 472 222 456 253C442 282 416 308 415 340C414 372 436 399 463 415C493 432 529 433 564 434C603 435 643 435 677 419C711 403 737 375 751 341C765 307 767 270 768 233C770 199 766 164 746 136C724 106 691 92 657 89C624 86 585 84 552 90Z',
-			labelX: '46',
-			labelY: '20',
-			labelWidth: '16'
+			fill: '#2d8659',
+			stroke: '#5db876',
+			path: 'M550 100L575 85L600 95L620 75L640 90L655 120L665 155L670 190L665 225L645 250L615 260L575 265L550 255L530 230L520 190L525 150L535 115Z',
+			labelX: '50',
+			labelY: '22',
+			labelWidth: '18'
 		},
 		{
 			key: 'connect',
 			label: 'Connect',
-			fill: '#4a5057',
-			stroke: '#98a1a9',
-			path: 'M150 470C118 479 90 500 71 528C49 560 39 602 45 641C52 681 79 718 110 747C143 777 182 807 225 809C265 811 301 786 337 769C375 751 410 729 450 712C494 693 542 682 577 651C608 624 633 588 631 550C629 514 594 490 558 478C515 464 469 468 425 470C378 472 333 478 286 479C236 480 196 457 150 470Z',
-			labelX: '10',
+			fill: '#556270',
+			stroke: '#8b93a1',
+			path: 'M130 500L160 485L190 495L215 480L240 495L260 520L275 555L280 595L275 630L255 655L220 670L180 675L145 665L110 645L85 615L70 575L80 535L105 515Z',
+			labelX: '13',
 			labelY: '66',
-			labelWidth: '22'
+			labelWidth: '20'
 		},
 		{
 			key: 'software',
 			label: 'Software',
-			fill: '#9d7f1d',
-			stroke: '#d7b34d',
-			path: 'M777 30C749 49 727 77 729 111C732 149 759 180 792 197C829 216 872 220 912 219C954 218 998 216 1033 192C1066 170 1090 135 1092 95C1094 61 1070 30 1032 30L777 30Z',
-			labelX: '74',
-			labelY: '5',
-			labelWidth: '14'
+			fill: '#a68c2e',
+			stroke: '#d4b860',
+			path: 'M760 70L790 55L820 65L850 48L875 70L895 100L910 140L915 180L905 210L875 230L840 235L805 225L780 205L765 170L760 130Z',
+			labelX: '72',
+			labelY: '15',
+			labelWidth: '16'
 		},
 		{
 			key: 'hardware',
 			label: 'Hardware',
-			fill: '#6f367d',
-			stroke: '#ab61bf',
-			path: 'M804 386C771 399 745 424 731 455C717 487 716 525 729 556C742 589 769 615 800 629C833 644 871 647 904 633C936 620 962 597 975 566C987 537 988 503 975 473C962 443 936 418 905 405C871 391 838 373 804 386Z',
+			fill: '#7a4d94',
+			stroke: '#b88dbf',
+			path: 'M830 425L855 410L880 425L900 455L905 490L895 520L870 535L840 540L815 520L810 480L820 450Z',
 			labelX: '70',
-			labelY: '49',
-			labelWidth: '12'
+			labelY: '55',
+			labelWidth: '16'
 		}
 	];
 
@@ -156,14 +156,30 @@
 			</header>
 
 			<svg class="terrain" viewBox="0 0 1100 800" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+				<defs>
+					<filter id="island-shadow">
+						<feGaussianBlur in="SourceAlpha" stdDeviation="3" />
+						<feOffset dx="1" dy="3" />
+						<feComponentTransfer>
+							<feFuncA type="linear" slope="0.3" />
+						</feComponentTransfer>
+						<feMerge>
+							<feMergeNode />
+							<feMergeNode in="SourceGraphic" />
+						</feMerge>
+					</filter>
+				</defs>
 				{#each zones as zone}
-					<path
-						d={zone.path}
-						fill={zone.fill}
-						stroke={zone.stroke}
-						stroke-width={selectedZoneKey === zone.key ? '4' : '3'}
-						opacity={selectedZoneKey && selectedZoneKey !== zone.key ? '0.78' : '1'}
-					/>
+					<g filter="url(#island-shadow)">
+						<path
+							d={zone.path}
+							fill={zone.fill}
+							stroke={zone.stroke}
+							stroke-width={selectedZoneKey === zone.key ? '4' : '3'}
+							stroke-linejoin="round"
+							opacity={selectedZoneKey && selectedZoneKey !== zone.key ? '0.78' : '1'}
+						/>
+					</g>
 				{/each}
 			</svg>
 

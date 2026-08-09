@@ -1,65 +1,93 @@
-# Svelte library
+# Slack Map
 
-Everything you need to build a Svelte library, powered by [`sv`](https://npmjs.com/package/sv).
+An interactive archipelago explorer for Slack workspaces. Visualize channels as thematic islands and discover your workspace in a fun, engaging way.
 
-Read more about creating a library [in the docs](https://svelte.dev/docs/kit/packaging).
+## Quick Start
 
-## Creating a project
+### Prerequisites
+- Node.js 18+
+- A Slack bot token with permissions to list channels
 
-If you're seeing this, you've probably already done this step. Congrats!
+### Local Development
 
-```sh
-# create a new project in the current directory
-npx sv create
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-# create a new project in my-app
-npx sv create my-app
-```
+2. **Set up environment:**
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your SLACK_BOT_TOKEN
+   ```
 
-To recreate this project with the same configuration:
+3. **Start dev server:**
+   ```bash
+   npm run dev
+   # Opens at http://localhost:5173
+   ```
 
-```sh
-# recreate this project
-npx sv@0.12.5 create --template library --types ts --install npm ./
-```
+4. **Type checking:**
+   ```bash
+   npm run check
+   ```
 
-## Developing
+## Building for Production
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-Everything inside `src/lib` is part of your library, everything inside `src/routes` can be used as a showcase or preview app.
-
-## Building
-
-To build your library:
-
-```sh
-npm pack
-```
-
-To create a production version of your showcase app:
-
-```sh
+```bash
 npm run build
+npm start
 ```
 
-You can preview the production build with `npm run preview`.
+The app will serve on `http://localhost:3000`
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+## Deployment
 
-## Publishing
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions on deploying to:
+- systemd (Linux service)
+- Docker
+- PM2 (Node process manager)
+- Behind nginx/Apache
 
-Go into the `package.json` and give your package the desired name through the `"name"` option. Also consider adding a `"license"` field and point it to a `LICENSE` file which you can create from a template (one popular option is the [MIT license](https://opensource.org/license/mit/)).
+## Project Structure
 
-To publish your library to [npm](https://www.npmjs.com):
-
-```sh
-npm publish
 ```
+src/
+├── lib/
+│   ├── index.ts        # Library exports
+│   └── slack.ts        # Slack API client
+├── routes/
+│   ├── +page.svelte    # Main map component
+│   └── api/
+│       └── slack-channels/  # API endpoints for fetching channels
+└── app.d.ts            # Type definitions
+```
+
+## Features
+
+- 🗺️ Interactive island-based visualization of Slack channels
+- 🎨 Thematic islands for different channel categories
+- 📱 Responsive design for all devices
+- 🔍 Channel discovery and exploration
+- ⚡ Fast loading with real Slack workspace data
+
+## Environment Variables
+
+Required:
+- `SLACK_BOT_TOKEN` - Your Slack workspace bot token
+
+Optional:
+- `PORT` - Server port (default: 3000 in production, 5173 in dev)
+- `NODE_ENV` - Set to `production` for production builds
+
+## Available Scripts
+
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Run production build
+- `npm run preview` - Preview production build locally
+- `npm run check` - Run type checking
+
+## License
+
+MIT

@@ -66,11 +66,21 @@
 		}
 	];
 
+	type IslandBounds = { minX: number; minY: number; width: number; height: number };
+	const islandBounds: Record<string, IslandBounds> = {
+		community: { minX: 80, minY: 75, width: 180, height: 190 },
+		ysws: { minX: 520, minY: 85, width: 150, height: 180 },
+		connect: { minX: 70, minY: 480, width: 220, height: 205 },
+		software: { minX: 760, minY: 48, width: 155, height: 162 },
+		hardware: { minX: 810, minY: 405, width: 100, height: 140 }
+	};
+
 	let channels: SlackChannel[] = [];
 	let selectedChannel: SlackChannel | null = null;
 	let isBooting = true;
 	let bootError = '';
 	let zoomedZoneKey: string | null = null;
+	let svgViewBox = '0 0 1100 800';
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
 	$: zoneEntries = zones.map((zone) => ({
@@ -127,7 +137,17 @@
 	}
 
 	function toggleZoom(zoneKey: string) {
-		zoomedZoneKey = zoomedZoneKey === zoneKey ? null : zoneKey;
+		if (zoomedZoneKey === zoneKey) {
+			zoomedZoneKey = null;
+			svgViewBox = '0 0 1100 800';
+		} else {
+			zoomedZoneKey = zoneKey;
+			const bounds = islandBounds[zoneKey];
+			if (bounds) {
+				const padding = 40;
+				svgViewBox = `${bounds.minX - padding} ${bounds.minY - padding} ${bounds.width + padding * 2} ${bounds.height + padding * 2}`;
+			}
+		}
 	}
 </script>
 
@@ -163,7 +183,7 @@
 			<svg
 				class="terrain"
 				class:zoomed={zoomedZoneKey !== null}
-				viewBox="0 0 1100 800"
+				viewBox={svgViewBox}
 				preserveAspectRatio="xMidYMid meet"
 				aria-hidden="true"
 			>
@@ -338,6 +358,7 @@
 		position: relative;
 		min-height: 100vh;
 		background: #1d222c;
+		overflow: hidden;
 	}
 
 	.hackclub-flag {
@@ -407,26 +428,24 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
-		transition: transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-		transform-origin: center;
-	}
-
-	.terrain.zoomed {
-		transform: scale(4) translate(0, -10%);
+		transition: opacity 0.4s ease;
 	}
 
 	.terrain g.zoomable {
 		cursor: pointer;
-		transition: filter 0.2s ease;
 	}
 
 	.terrain g.zoomable:hover path {
 		filter: brightness(1.15);
+		transition: filter 0.2s ease;
+	}
+
+	.terrain path {
+		transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
 	.terrain path.hidden-island {
 		opacity: 0 !important;
-		transition: opacity 0.4s ease;
 	}
 
 	.terrain path.zoomed-island {

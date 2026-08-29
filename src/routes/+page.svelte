@@ -82,6 +82,7 @@
 	let isBooting = true;
 	let bootError = '';
 	let zoomedZoneKey: string | null = null;
+	let svgElement: SVGSVGElement;
 
 	const viewBoxTween = tweened(
 		{ x: 0, y: 0, width: 1100, height: 800 },
@@ -92,6 +93,29 @@
 	);
 
 	$: svgViewBox = `${Math.round($viewBoxTween.x)} ${Math.round($viewBoxTween.y)} ${Math.round($viewBoxTween.width)} ${Math.round($viewBoxTween.height)}`;
+
+	function getLabelPosition(zone: Zone) {
+		if (!zoomedZoneKey) {
+			return { left: `${zone.labelX}%`, top: `${zone.labelY}%`, width: `${zone.labelWidth}%` };
+		}
+
+		const vb = $viewBoxTween;
+		const labelXNum = parseFloat(zone.labelX);
+		const labelYNum = parseFloat(zone.labelY);
+		const labelWidthNum = parseFloat(zone.labelWidth);
+
+		// labelX/Y are percentages of the full map (1100x800 viewBox)
+		const svgX = (labelXNum / 100) * 1100;
+		const svgY = (labelYNum / 100) * 800;
+		const svgWidth = (labelWidthNum / 100) * 1100;
+
+		// Transform to zoomed viewBox space as percentages
+		const percentX = ((svgX - vb.x) / vb.width) * 100;
+		const percentY = ((svgY - vb.y) / vb.height) * 100;
+		const percentWidth = (svgWidth / vb.width) * 100;
+
+		return { left: `${percentX}%`, top: `${percentY}%`, width: `${percentWidth}%` };
+	}
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
 	$: zoneEntries = zones.map((zone) => ({
@@ -155,7 +179,7 @@
 			zoomedZoneKey = zoneKey;
 			const bounds = islandBounds[zoneKey];
 			if (bounds) {
-				const padding = 40;
+				const padding = 15;
 				viewBoxTween.set({
 					x: bounds.minX - padding,
 					y: bounds.minY - padding,
@@ -173,7 +197,7 @@
 
 <div class="page-shell">
 	<section class="map-card" aria-labelledby="map-title">
-		<div class="map-stage">
+		<div class="map-stage" class:zoomed-state={zoomedZoneKey !== null}>
 			<a
 				class="hackclub-flag"
 				href="https://hackclub.com/"
@@ -197,6 +221,7 @@
 			</header>
 
 			<svg
+				bind:this={svgElement}
 				class="terrain"
 				class:zoomed={zoomedZoneKey !== null}
 				viewBox={svgViewBox}
@@ -241,11 +266,12 @@
 
 			<div class="zone-labels" class:zoomed={zoomedZoneKey !== null}>
 				{#each zoneEntries as zone}
+					{@const labelPos = getLabelPosition(zone)}
 					<div
 						class:selected={selectedZoneKey === zone.key}
 						class:zoom-expanded={zoomedZoneKey === zone.key}
 						class="zone-label"
-						style={`left:${zone.labelX}%; top:${zone.labelY}%; width:${zone.labelWidth}%;`}
+						style={`left:${labelPos.left}; top:${labelPos.top}; width:${labelPos.width};`}
 					>
 						<p class="zone-title">{zone.label}</p>
 						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
@@ -400,6 +426,12 @@
 		height: 19%;
 		background: #d8b864;
 		clip-path: polygon(4% 0, 100% 0, 100% 100%, 82% 92%, 72% 81%, 56% 84%, 44% 76%, 33% 80%, 22% 68%, 11% 62%, 0 42%);
+		transition: opacity 0.3s ease;
+	}
+
+	.map-stage.zoomed-state .top-wash {
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.side-lagoon {
@@ -410,6 +442,12 @@
 		height: 87%;
 		background: #9cd8e1;
 		clip-path: polygon(20% 0, 55% 0, 72% 7%, 100% 6%, 100% 100%, 0 100%, 4% 86%, 0 73%, 8% 57%, 1% 42%, 7% 24%, 1% 10%);
+		transition: opacity 0.3s ease;
+	}
+
+	.map-stage.zoomed-state .side-lagoon {
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.map-header {
@@ -476,11 +514,6 @@
 		transition: opacity 0.4s ease;
 	}
 
-	.zone-labels.zoomed {
-		opacity: 0;
-		pointer-events: none;
-	}
-
 	.zone-label {
 		position: absolute;
 		display: grid;
@@ -488,6 +521,16 @@
 		pointer-events: auto;
 		opacity: 1;
 		transition: opacity 0.3s ease;
+	}
+
+	.zone-labels.zoomed .zone-label {
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.zone-labels.zoomed .zone-label.zoom-expanded {
+		opacity: 1;
+		pointer-events: auto;
 	}
 
 	.zone-label.zoom-expanded {

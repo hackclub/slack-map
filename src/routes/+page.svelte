@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { tweened } from 'svelte/motion';
+	import { cubicInOut } from 'svelte/easing';
 	import { fetchChannels, fetchChannelInfo, type SlackChannel } from '../lib/slack.js';
 
 	type Zone = {
@@ -80,7 +82,16 @@
 	let isBooting = true;
 	let bootError = '';
 	let zoomedZoneKey: string | null = null;
-	let svgViewBox = '0 0 1100 800';
+
+	const viewBoxTween = tweened(
+		{ x: 0, y: 0, width: 1100, height: 800 },
+		{
+			duration: 700,
+			easing: cubicInOut
+		}
+	);
+
+	$: svgViewBox = `${Math.round($viewBoxTween.x)} ${Math.round($viewBoxTween.y)} ${Math.round($viewBoxTween.width)} ${Math.round($viewBoxTween.height)}`;
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
 	$: zoneEntries = zones.map((zone) => ({
@@ -139,13 +150,18 @@
 	function toggleZoom(zoneKey: string) {
 		if (zoomedZoneKey === zoneKey) {
 			zoomedZoneKey = null;
-			svgViewBox = '0 0 1100 800';
+			viewBoxTween.set({ x: 0, y: 0, width: 1100, height: 800 });
 		} else {
 			zoomedZoneKey = zoneKey;
 			const bounds = islandBounds[zoneKey];
 			if (bounds) {
 				const padding = 40;
-				svgViewBox = `${bounds.minX - padding} ${bounds.minY - padding} ${bounds.width + padding * 2} ${bounds.height + padding * 2}`;
+				viewBoxTween.set({
+					x: bounds.minX - padding,
+					y: bounds.minY - padding,
+					width: bounds.width + padding * 2,
+					height: bounds.height + padding * 2
+				});
 			}
 		}
 	}

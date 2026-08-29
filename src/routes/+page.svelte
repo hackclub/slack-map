@@ -211,18 +211,7 @@
 						class="zone-label"
 						style={`left:${zone.labelX}%; top:${zone.labelY}%; width:${zone.labelWidth}%;`}
 					>
-						<button
-							class="zone-expand-btn"
-							on:click={() => toggleZoom(zone.key)}
-							aria-label={zoomedZoneKey === zone.key ? 'Zoom out' : 'Zoom in'}
-						>
-							{#if zoomedZoneKey === zone.key}
-								<span class="zone-title-zoom">{zone.label}</span>
-								<span class="zoom-close">×</span>
-							{:else}
-								<p class="zone-title">{zone.label}</p>
-							{/if}
-						</button>
+						<p class="zone-title">{zone.label}</p>
 						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
 							{#if zone.channels.length}
 								{#each zone.channels as channel}
@@ -240,6 +229,16 @@
 						{/if}
 					</div>
 				{/each}
+				{#if zoomedZoneKey}
+					<div class="zone-title-zoom">{zones.find(z => z.key === zoomedZoneKey)?.label}</div>
+					<button
+						class="zoom-close"
+						on:click={() => toggleZoom(zoomedZoneKey!)}
+						aria-label="Zoom out"
+					>
+						×
+					</button>
+				{/if}
 			</div>
 
 			<aside class="legend-panel">
@@ -408,37 +407,30 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
-		transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+		transition: transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+		transform-origin: center;
 	}
 
-	.terrain.zoomed g.zoomable {
-		pointer-events: none;
+	.terrain.zoomed {
+		transform: scale(4) translate(0, -10%);
 	}
 
 	.terrain g.zoomable {
 		cursor: pointer;
-		transition: filter 0.3s ease;
+		transition: filter 0.2s ease;
 	}
 
-	.terrain g.zoomable:hover {
-		filter: brightness(1.1);
-	}
-
-	.terrain path.zoomed-island {
-		animation: zoomIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+	.terrain g.zoomable:hover path {
+		filter: brightness(1.15);
 	}
 
 	.terrain path.hidden-island {
-		opacity: 0.1 !important;
+		opacity: 0 !important;
+		transition: opacity 0.4s ease;
 	}
 
-	@keyframes zoomIn {
-		from {
-			filter: drop-shadow(0 0 20px rgba(0, 0, 0, 0.5));
-		}
-		to {
-			filter: drop-shadow(0 0 0 rgba(0, 0, 0, 0));
-		}
+	.terrain path.zoomed-island {
+		opacity: 1 !important;
 	}
 
 	.zone-labels {
@@ -446,12 +438,12 @@
 		inset: 0;
 		z-index: 2;
 		pointer-events: none;
-		transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+		transition: opacity 0.4s ease;
 	}
 
 	.zone-labels.zoomed {
-		background: rgba(0, 0, 0, 0.5);
-		pointer-events: auto;
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.zone-label {
@@ -459,29 +451,13 @@
 		display: grid;
 		gap: 0.35rem;
 		pointer-events: auto;
-		transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+		opacity: 1;
+		transition: opacity 0.3s ease;
 	}
 
 	.zone-label.zoom-expanded {
-		position: fixed;
-		inset: 0;
-		left: 50% !important;
-		top: 50% !important;
-		width: auto !important;
-		transform: translate(-50%, -50%);
 		z-index: 10;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 1.5rem;
-		background: rgba(29, 34, 44, 0.95);
-		border-radius: 24px;
-		padding: 2rem;
-		max-width: 90vw;
-		max-height: 90vh;
-		overflow-y: auto;
-		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+		pointer-events: auto;
 	}
 
 	.zone-label.selected .zone-channel,
@@ -489,30 +465,16 @@
 		opacity: 1;
 	}
 
-	.zone-expand-btn {
-		border: 0;
-		background: transparent;
-		padding: 0;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.5rem;
-		width: 100%;
-		font: inherit;
-	}
-
-	.zone-expand-btn:focus {
-		outline: 2px solid rgba(255, 255, 255, 0.3);
-		border-radius: 8px;
-		padding: 0.25rem;
-	}
-
 	.zone-title-zoom {
 		font-size: 2rem;
 		font-weight: 900;
 		color: #fff;
 		margin: 0;
+		position: fixed;
+		top: 2rem;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 11;
 	}
 
 	.zoom-close {
@@ -520,10 +482,25 @@
 		color: rgba(255, 255, 255, 0.7);
 		line-height: 1;
 		transition: all 0.2s ease;
+		position: fixed;
+		top: 1.5rem;
+		right: 2rem;
+		z-index: 11;
+		cursor: pointer;
+		padding: 0.5rem;
+		background: rgba(255, 255, 255, 0.1);
+		border: none;
+		border-radius: 50%;
+		width: 3rem;
+		height: 3rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	.zone-expand-btn:hover .zoom-close {
+	.zoom-close:hover {
 		color: #fff;
+		background: rgba(255, 255, 255, 0.15);
 		transform: rotate(90deg);
 	}
 
@@ -563,10 +540,6 @@
 	.zone-channel:hover {
 		background: rgba(255, 255, 255, 0.15);
 		transform: translateX(4px);
-	}
-
-	.zone-expand-btn ~ .zone-channel {
-		font-size: 1.1rem;
 	}
 
 	.zone-channel.selected-channel {

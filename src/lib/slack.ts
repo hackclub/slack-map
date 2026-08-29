@@ -10,7 +10,27 @@ export type SlackChannelDetails = SlackChannel & {
 	topic?: { value?: string };
 	purpose?: { value?: string };
 	created?: number;
+	num_members?: number;
 };
+
+const SLACK_WORKSPACE = 'hackclub';
+
+export function channelUrl(channelId: string): string {
+	return `https://${SLACK_WORKSPACE}.slack.com/archives/${channelId}`;
+}
+
+export function formatSlackText(text: string | undefined) {
+	if (!text) return '';
+	return text
+		.replace(/<#[A-Z0-9]+\|([^>]+)>/g, '#$1')
+		.replace(/<#([A-Z0-9]+)>/g, '#channel')
+		.replace(/<(https?:[^|>]+)\|([^>]+)>/g, '$2')
+		.replace(/<(https?:[^>]+)>/g, '$1')
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>');
+}
+
 
 async function readJson<T>(response: Response): Promise<T> {
 	const payload = await response.json();

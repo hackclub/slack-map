@@ -16,7 +16,7 @@ export const GET: RequestHandler = async ({ params }) => {
 
 	try {
 		const response = await fetch(
-			`https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`,
+			`https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}&include_num_members=true`,
 			{
 				headers: {
 					Authorization: `Bearer ${token}`

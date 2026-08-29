@@ -2,7 +2,20 @@
 	import { onMount } from 'svelte';
 	import { tweened } from 'svelte/motion';
 	import { cubicInOut } from 'svelte/easing';
-	import { fetchChannels, fetchChannelInfo, type SlackChannel } from '../lib/slack.js';
+	import {
+		fetchChannels,
+		fetchChannelInfo,
+		type SlackChannel,
+		type SlackChannelDetails
+	} from '../lib/slack.js';
+	import { zoneForChannelName } from '../lib/zones.js';
+	import ChannelModal from '../lib/ChannelModal.svelte';
+
+
+	let modalChannel: SlackChannelDetails | null = null;
+	let modalOpen = false;
+	let modalLoading = false;
+	let modalError = '';
 
 	type Zone = {
 		key: string;
@@ -10,9 +23,6 @@
 		fill: string;
 		stroke: string;
 		path: string;
-		labelX: string;
-		labelY: string;
-		labelWidth: string;
 	};
 
 	const zones: Zone[] = [
@@ -21,60 +31,50 @@
 			label: 'Community',
 			fill: '#4a7ba7',
 			stroke: '#7aa8d1',
-			path: 'M100 140L115 110L135 120L145 95L165 105L175 85L195 100L210 75L230 110L245 135L255 165L260 200L255 235L235 255L200 260L160 255L125 245L95 225L80 190L85 155Z',
-			labelX: '10',
-			labelY: '22',
-			labelWidth: '18'
+			// largest island — broad, gently lobed coast
+			path: 'M373 302C374 323 378 344 375 365C372 386 368 414 354 430C340 445 311 448 291 456C271 465 254 476 234 481C214 486 192 487 170 487C148 486 125 483 102 476C80 469 48 461 35 443C22 425 24 392 21 368C19 345 18 324 19 302C19 280 20 261 22 237C23 212 14 172 28 156C42 140 84 142 108 140C133 137 154 142 174 143C195 143 210 142 231 142C251 142 271 139 296 141C320 143 366 138 378 155C390 172 369 217 369 242C368 266 372 282 373 302'
 		},
 		{
 			key: 'ysws',
 			label: 'YSWS!',
 			fill: '#2d8659',
 			stroke: '#5db876',
-			path: 'M550 100L575 85L600 95L620 75L640 90L655 120L665 155L670 190L665 225L645 250L615 260L575 265L550 255L530 230L520 190L525 150L535 115Z',
-			labelX: '50',
-			labelY: '22',
-			labelWidth: '18'
+			// a calm, near-circular mass
+			path: 'M651 324C652 340 653 352 657 373C660 394 678 432 671 449C663 467 631 471 612 481C592 491 575 501 554 510C532 519 506 539 484 537C462 534 439 511 422 496C405 480 385 463 380 442C375 422 388 391 390 371C393 352 396 340 395 324C394 308 386 293 385 274C385 256 385 236 391 214C396 193 402 159 419 147C435 135 467 139 489 142C511 145 528 162 549 166C570 169 598 153 614 162C631 171 642 198 647 218C653 237 647 260 647 278C648 296 649 308 651 324'
 		},
 		{
 			key: 'connect',
 			label: 'Connect',
 			fill: '#556270',
 			stroke: '#8b93a1',
-			path: 'M130 500L160 485L190 495L215 480L240 495L260 520L275 555L280 595L275 630L255 655L220 670L180 675L145 665L110 645L85 615L70 575L80 535L105 515Z',
-			labelX: '13',
-			labelY: '66',
-			labelWidth: '20'
+			// widest island — a teardrop, fat in the east and tapering west
+			path: 'M475 644C474 668 473 690 469 714C465 739 467 776 450 789C432 802 387 793 363 794C339 795 322 795 304 796C285 796 269 796 250 796C231 796 214 796 190 795C165 794 131 800 104 790C77 780 40 760 26 736C12 712 21 675 21 644C21 614 12 577 27 553C41 530 79 510 107 502C135 494 172 505 196 504C220 502 231 498 250 492C269 486 287 472 308 469C329 467 355 467 374 476C394 484 406 506 423 522C439 538 465 552 474 573C482 593 475 621 475 644'
 		},
 		{
 			key: 'software',
 			label: 'Software',
 			fill: '#a68c2e',
 			stroke: '#d4b860',
-			path: 'M760 70L790 55L820 65L850 48L875 70L895 100L910 140L915 180L905 210L875 230L840 235L805 225L780 205L765 170L760 130Z',
-			labelX: '72',
-			labelY: '15',
-			labelWidth: '16'
+			// smallest island — a rounded triangle with three broad shoulders
+			path: 'M840 317C840 326 839 333 839 344C839 354 840 364 839 380C838 396 842 420 835 440C828 460 813 495 797 501C780 506 754 483 737 472C720 462 704 452 694 438C684 425 682 404 678 389C674 375 671 363 669 351C667 339 668 329 667 317C666 305 664 294 664 280C664 267 664 253 667 235C669 216 667 181 679 168C690 156 718 159 736 158C755 158 774 160 791 166C807 172 828 179 835 194C843 209 837 240 837 256C838 272 837 280 837 290C838 300 840 308 840 317'
 		},
 		{
 			key: 'hardware',
 			label: 'Hardware',
 			fill: '#7a4d94',
 			stroke: '#b88dbf',
-			path: 'M830 425L855 410L880 425L900 455L905 490L895 520L870 535L840 540L815 520L810 480L820 450Z',
-			labelX: '70',
-			labelY: '55',
-			labelWidth: '16'
+			// a crescent, with a bay carved out of the north-west side
+			path: 'M838 652C839 673 841 693 839 716C837 739 842 776 827 789C811 802 769 793 746 794C723 795 707 795 689 796C671 796 656 796 639 796C621 795 605 795 582 794C559 793 517 802 501 789C485 776 487 740 486 717C485 694 493 673 494 652C496 631 489 609 495 591C501 572 516 553 531 540C546 528 566 522 584 513C601 505 616 497 635 490C654 482 677 466 696 468C715 471 731 493 750 503C769 513 795 516 809 530C824 545 832 569 837 589C842 609 838 631 838 652'
 		}
 	];
 
 	type IslandBounds = { minX: number; minY: number; width: number; height: number };
 	const islandBounds: Record<string, IslandBounds> = {
-		community: { minX: 80, minY: 75, width: 180, height: 190 },
-		ysws: { minX: 520, minY: 85, width: 150, height: 180 },
-		connect: { minX: 70, minY: 480, width: 220, height: 205 },
-		software: { minX: 760, minY: 48, width: 155, height: 162 },
-		hardware: { minX: 810, minY: 405, width: 100, height: 140 }
+		community: { minX: 19, minY: 139, width: 363, height: 348 },
+		ysws: { minX: 379, minY: 139, width: 294, height: 398 },
+		connect: { minX: 18, minY: 468, width: 460, height: 328 },
+		software: { minX: 664, minY: 158, width: 176, height: 343 },
+		hardware: { minX: 486, minY: 468, width: 354, height: 328 }
 	};
 
 	let channels: SlackChannel[] = [];
@@ -82,7 +82,6 @@
 	let isBooting = true;
 	let bootError = '';
 	let zoomedZoneKey: string | null = null;
-	let svgElement: SVGSVGElement;
 
 	const viewBoxTween = tweened(
 		{ x: 0, y: 0, width: 1100, height: 800 },
@@ -94,33 +93,135 @@
 
 	$: svgViewBox = `${Math.round($viewBoxTween.x)} ${Math.round($viewBoxTween.y)} ${Math.round($viewBoxTween.width)} ${Math.round($viewBoxTween.height)}`;
 
-	function getLabelPosition(zone: Zone) {
-		if (!zoomedZoneKey) {
-			return { left: `${zone.labelX}%`, top: `${zone.labelY}%`, width: `${zone.labelWidth}%` };
+	// NOTE: islands interlock, so their bounding boxes deliberately overlap even
+	// though no two coastlines come within 15px of each other. Never test island
+	// separation with these boxes — compare the outlines themselves.
+	// The area inside each island that channel chips may occupy: the largest
+	// rectangle that fits within that island's coastline, measured offline from
+	// the path itself. Deriving it as a centred inset of the bounding box does not
+	// work — `hardware` is a crescent whose bay reaches past its own bbox centre,
+	// so its text area sits deliberately off-centre. Re-measure these whenever a
+	// path changes, or chips will drift off the coastline.
+	type LabelArea = { x: number; y: number; width: number; height: number };
+	const labelAreas: Record<string, LabelArea> = {
+		community: { x: 28, y: 164, width: 326, height: 263 },
+		ysws: { x: 399, y: 192, width: 239, height: 273 },
+		connect: { x: 59, y: 535, width: 379, height: 228 },
+		software: { x: 689, y: 195, width: 143, height: 235 },
+		hardware: { x: 520, y: 555, width: 303, height: 237 }
+	};
+
+	// `viewBox` is a parameter rather than a `$viewBoxTween` read inside the body:
+	// Svelte compiles a template `{@const}` inside `$.untrack(...)`, so a store
+	// read in here would be invisible and the labels would stay frozen in their
+	// unzoomed spots while the map animated underneath them.
+	function getLabelPosition(zone: Zone, viewBox: { x: number; y: number; width: number; height: number }) {
+		const area = labelAreas[zone.key];
+		const vb = viewBox;
+
+		// One path for both states: unzoomed the viewBox is just the full map.
+		return {
+			left: `${((area.x - vb.x) / vb.width) * 100}%`,
+			top: `${((area.y - vb.y) / vb.height) * 100}%`,
+			width: `${(area.width / vb.width) * 100}%`,
+			height: `${(area.height / vb.height) * 100}%`
+		};
+	}
+
+	// --- scattered channel placement -------------------------------------------
+	// Chips sit at pseudo-random spots inside their island rather than on a grid.
+	// Every position is derived from the channel name, never Math.random(): the
+	// server and client must agree during hydration, and a chip must not hop to a
+	// new spot every time the component re-renders.
+
+	function hashString(value: string) {
+		let hash = 2166136261;
+
+		for (let index = 0; index < value.length; index++) {
+			hash ^= value.charCodeAt(index);
+			hash = Math.imul(hash, 16777619);
 		}
 
-		const vb = $viewBoxTween;
-		const labelXNum = parseFloat(zone.labelX);
-		const labelYNum = parseFloat(zone.labelY);
-		const labelWidthNum = parseFloat(zone.labelWidth);
-
-		// labelX/Y are percentages of the full map (1100x800 viewBox)
-		const svgX = (labelXNum / 100) * 1100;
-		const svgY = (labelYNum / 100) * 800;
-		const svgWidth = (labelWidthNum / 100) * 1100;
-
-		// Transform to zoomed viewBox space as percentages
-		const percentX = ((svgX - vb.x) / vb.width) * 100;
-		const percentY = ((svgY - vb.y) / vb.height) * 100;
-		const percentWidth = (svgWidth / vb.width) * 100;
-
-		return { left: `${percentX}%`, top: `${percentY}%`, width: `${percentWidth}%` };
+		return hash >>> 0;
 	}
+
+	/** mulberry32 — one stable float in [0,1) per seed. */
+	function seededRandom(seed: number) {
+		let t = (seed + 0x6d2b79f5) | 0;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	}
+
+	function greatestCommonDivisor(a: number, b: number): number {
+		return b === 0 ? a : greatestCommonDivisor(b, a % b);
+	}
+
+	// Horizontal/vertical share of the label box the scatter may use, the top band
+	// kept clear for the zone title, and how far a chip may drift inside its cell.
+	// These were grid-searched for zero chip-on-chip overlap and zero overflow
+	// across 1280..1920 wide viewports, against the labelAreas above. Re-run that
+	// search if a labelArea shrinks: `community` packs 8 chips into the tightest
+	// area and is the first to collide.
+	const SCATTER_SPREAD_X = 46;
+	const SCATTER_TOP = 22;
+	const SCATTER_BOTTOM = 97;
+	const SCATTER_JITTER_X = 0.4;
+	const SCATTER_JITTER_Y = 0.5;
+	// Chips are far wider than they are tall, so more than two per row collides.
+	const SCATTER_SINGLE_COLUMN_MAX = 3;
+
+	function getScatterPosition(zoneKey: string, name: string, index: number, total: number) {
+		const seed = hashString(`${zoneKey}:${name}`);
+
+		// Stratified sampling: hand each chip its own cell of a coarse grid, then
+		// jitter inside that cell. Pure random would clump and overlap; this keeps
+		// them apart while still reading as scattered.
+		const columns = total <= SCATTER_SINGLE_COLUMN_MAX ? 1 : 2;
+		const rows = Math.max(1, Math.ceil(total / columns));
+		const cellCount = columns * rows;
+
+		// Walking the cells with a stride coprime to the count visits each exactly
+		// once, so chips fill the island in a shuffled order instead of row by row.
+		let stride = 1 + (hashString(zoneKey) % Math.max(1, cellCount - 1));
+		while (greatestCommonDivisor(stride, cellCount) !== 1) stride++;
+		const cell = (index * stride) % cellCount;
+
+		const column = cell % columns;
+		const row = Math.floor(cell / columns);
+
+		const jitterX = (seededRandom(seed) - 0.5) * SCATTER_JITTER_X;
+		const jitterY = (seededRandom(seed ^ 0x9e3779b9) - 0.5) * SCATTER_JITTER_Y;
+
+		// -1..1 within the box, then pulled inside an inscribed ellipse so chips
+		// follow the blob's rounded silhouette instead of reaching into its corners.
+		let unitX = ((column + 0.5 + jitterX) / columns) * 2 - 1;
+		let unitY = ((row + 0.5 + jitterY) / rows) * 2 - 1;
+
+		const radius = Math.hypot(unitX, unitY);
+		if (radius > 0.95) {
+			unitX = (unitX / radius) * 0.95;
+			unitY = (unitY / radius) * 0.95;
+		}
+
+		return {
+			left: `${50 + unitX * SCATTER_SPREAD_X}%`,
+			top: `${SCATTER_TOP + (unitY * 0.5 + 0.5) * (SCATTER_BOTTOM - SCATTER_TOP)}%`,
+			tilt: ((seededRandom(seed ^ 0x85ebca6b) - 0.5) * 9).toFixed(2)
+		};
+	}
+
+	// Named here so the reactive statement actually tracks the tween; the template
+	// only reads the finished map, which keeps the labels glued to their islands
+	// through the whole zoom animation.
+	$: labelBoxes = Object.fromEntries(
+		zones.map((zone) => [zone.key, getLabelPosition(zone, $viewBoxTween)])
+	);
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
 	$: zoneEntries = zones.map((zone) => ({
 		...zone,
-		channels: getChannelsForZone(zone.key)
+		channels: getChannelsForZone(zone.key, channels)
 	}));
 
 	onMount(async () => {
@@ -144,31 +245,31 @@
 
 	async function selectChannel(channel: SlackChannel) {
 		selectedChannel = channel;
-		bootError = '';
+		modalOpen = true;
+		modalLoading = true;
+		modalError = '';
+		modalChannel = null;
 
 		try {
-			await fetchChannelInfo(channel.id);
+			modalChannel = await fetchChannelInfo(channel.id);
 		} catch (error) {
-			bootError = error instanceof Error ? error.message : 'Unable to inspect channel';
+			modalError = error instanceof Error ? error.message : 'Unable to load channel';
+		} finally {
+			modalLoading = false;
 		}
-	}
-
-	function hashChannel(name: string) {
-		let hash = 0;
-
-		for (const character of name) {
-			hash = (hash * 31 + character.charCodeAt(0)) % 2147483647;
-		}
-
-		return hash;
 	}
 
 	function getZoneForChannel(channel: SlackChannel) {
-		return zones[hashChannel(channel.name) % zones.length];
+		const key = zoneForChannelName(channel.name);
+		return zones.find((zone) => zone.key === key) ?? zones[0];
 	}
 
-	function getChannelsForZone(zoneKey: string) {
-		return channels.filter((channel) => getZoneForChannel(channel).key === zoneKey).slice(0, 8);
+	// `source` is passed in rather than read off the outer `channels` binding:
+	// a `$:` statement only tracks what it names directly, so reading `channels`
+	// inside here would leave the dependency invisible and the map would never
+	// update once the fetch resolves.
+	function getChannelsForZone(zoneKey: string, source: SlackChannel[] = channels) {
+		return source.filter((channel) => getZoneForChannel(channel).key === zoneKey).slice(0, 8);
 	}
 
 	function toggleZoom(zoneKey: string) {
@@ -208,8 +309,36 @@
 				<img
 					src="https://assets.hackclub.com/flag-orpheus-left.svg"
 					alt="Hack Club"
+					style="margin-left:-0.6rem"
 				/>
 			</a>
+			<!--
+				Coastlines for the two decorative washes. Defined as SVG clip paths in
+				objectBoundingBox units (0..1) rather than CSS polygon() so the edges can
+				be bezier curves instead of hard vertices, while still scaling with the
+				element the way a percentage polygon does.
+			-->
+			<svg class="clip-defs" aria-hidden="true" focusable="false">
+				<defs>
+					<clipPath id="wash-coast" clipPathUnits="objectBoundingBox">
+						<path
+							d="M0.04,0 L1,0 L1,1 C0.84,0.95 0.7,0.86 0.55,0.83 C0.38,0.79 0.24,0.66 0.13,0.55 C0.07,0.49 0.03,0.45 0,0.42 Z"
+						/>
+					</clipPath>
+					<clipPath id="lagoon-coast" clipPathUnits="objectBoundingBox">
+						<path
+							d="M0.24,0 L1,0 L1,1 L0,1 C0.05,0.87 0.02,0.75 0.05,0.63 C0.08,0.5 0.03,0.38 0.06,0.26 C0.09,0.15 0.15,0.07 0.24,0 Z"
+						/>
+					</clipPath>
+					<!-- narrow screens move the lagoon to the bottom, so it needs a horizontal coast -->
+					<clipPath id="lagoon-coast-bottom" clipPathUnits="objectBoundingBox">
+						<path
+							d="M0,0.2 C0.14,0.06 0.3,0.02 0.45,0.07 C0.62,0.13 0.8,0.03 1,0 L1,1 L0,1 Z"
+						/>
+					</clipPath>
+				</defs>
+			</svg>
+
 			<div class="top-wash" aria-hidden="true"></div>
 			<div class="side-lagoon" aria-hidden="true"></div>
 
@@ -221,11 +350,10 @@
 			</header>
 
 			<svg
-				bind:this={svgElement}
 				class="terrain"
 				class:zoomed={zoomedZoneKey !== null}
 				viewBox={svgViewBox}
-				preserveAspectRatio="xMidYMid meet"
+				preserveAspectRatio="none"
 				aria-hidden="true"
 			>
 				<defs>
@@ -266,20 +394,27 @@
 
 			<div class="zone-labels" class:zoomed={zoomedZoneKey !== null}>
 				{#each zoneEntries as zone}
-					{@const labelPos = getLabelPosition(zone)}
+					{@const labelPos = labelBoxes[zone.key]}
 					<div
 						class:selected={selectedZoneKey === zone.key}
 						class:zoom-expanded={zoomedZoneKey === zone.key}
 						class="zone-label"
-						style={`left:${labelPos.left}; top:${labelPos.top}; width:${labelPos.width};`}
+						style={`left:${labelPos.left}; top:${labelPos.top}; width:${labelPos.width}; height:${labelPos.height};`}
 					>
 						<p class="zone-title">{zone.label}</p>
 						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
 							{#if zone.channels.length}
-								{#each zone.channels as channel}
+								{#each zone.channels as channel, index}
+									{@const spot = getScatterPosition(
+										zone.key,
+										channel.name,
+										index,
+										zone.channels.length
+									)}
 									<button
 										class:selected-channel={selectedChannel?.id === channel.id}
 										class="zone-channel"
+										style={`left:${spot.left}; top:${spot.top}; --tilt:${spot.tilt}deg;`}
 										on:click={() => selectChannel(channel)}
 									>
 										#{channel.name}
@@ -335,6 +470,15 @@
 		</div>
 	</section>
 </div>
+
+{#if modalOpen}
+	<ChannelModal
+		channel={modalChannel}
+		loading={modalLoading}
+		error={modalError}
+		on:close={() => (modalOpen = false)}
+	/>
+{/if}
 
 <style>
 	@font-face {
@@ -418,6 +562,14 @@
 		height: auto;
 	}
 
+	/* Carries only <defs>, so it must never occupy layout space. */
+	.clip-defs {
+		position: absolute;
+		width: 0;
+		height: 0;
+		pointer-events: none;
+	}
+
 	.top-wash {
 		position: absolute;
 		top: 0;
@@ -425,7 +577,7 @@
 		width: 52%;
 		height: 19%;
 		background: #d8b864;
-		clip-path: polygon(4% 0, 100% 0, 100% 100%, 82% 92%, 72% 81%, 56% 84%, 44% 76%, 33% 80%, 22% 68%, 11% 62%, 0 42%);
+		clip-path: url(#wash-coast);
 		transition: opacity 0.3s ease;
 	}
 
@@ -441,7 +593,7 @@
 		width: 23%;
 		height: 87%;
 		background: #9cd8e1;
-		clip-path: polygon(20% 0, 55% 0, 72% 7%, 100% 6%, 100% 100%, 0 100%, 4% 86%, 0 73%, 8% 57%, 1% 42%, 7% 24%, 1% 10%);
+		clip-path: url(#lagoon-coast);
 		transition: opacity 0.3s ease;
 	}
 
@@ -500,10 +652,18 @@
 
 	.terrain path.hidden-island {
 		opacity: 0 !important;
+		/*
+			opacity:0 still hit-tests in SVG, so without this a faded-out island that
+			peeks into the zoomed viewBox would silently steal the click and jump the
+			user to a different zone.
+		*/
+		pointer-events: none;
 	}
 
 	.terrain path.zoomed-island {
 		opacity: 1 !important;
+		/* clicking the enlarged island zooms back out */
+		cursor: pointer;
 	}
 
 	.zone-labels {
@@ -514,28 +674,55 @@
 		transition: opacity 0.4s ease;
 	}
 
+	/*
+		Sized to its island's region by getLabelPosition. Chips are absolutely
+		placed inside it by getScatterPosition, so this is just their containing
+		block — a fixed-anchor column used to overflow the coastline once a zone
+		held more than a few channels.
+	*/
 	.zone-label {
 		position: absolute;
-		display: grid;
-		gap: 0.35rem;
-		pointer-events: auto;
+		/*
+			Transparent to the mouse so a click anywhere over the island — including
+			the gaps between chips, which is most of the label box — falls through to
+			the island path underneath and zooms. Only the chips take clicks back.
+		*/
+		pointer-events: none;
 		opacity: 1;
 		transition: opacity 0.3s ease;
 	}
 
 	.zone-labels.zoomed .zone-label {
 		opacity: 0;
+	}
+
+	/* A faded-out label must not leave invisible chips behind to catch clicks. */
+	.zone-labels.zoomed .zone-label .zone-channel {
 		pointer-events: none;
 	}
 
 	.zone-labels.zoomed .zone-label.zoom-expanded {
 		opacity: 1;
+	}
+
+	.zone-labels.zoomed .zone-label.zoom-expanded .zone-channel {
 		pointer-events: auto;
 	}
 
 	.zone-label.zoom-expanded {
 		z-index: 10;
-		pointer-events: auto;
+	}
+
+	/* .zone-title-zoom already names the zone across the top when enlarged. */
+	.zone-label.zoom-expanded .zone-title {
+		display: none;
+	}
+
+	/* The island fills the viewport when enlarged, so the chips grow with it. */
+	.zone-label.zoom-expanded .zone-channel {
+		font-size: clamp(1rem, 1.5vw, 1.5rem);
+		padding: 0.5rem 1rem;
+		border-radius: 12px;
 	}
 
 	.zone-label.selected .zone-channel,
@@ -583,9 +770,14 @@
 	}
 
 	.zone-title {
-		margin-bottom: 0.15rem;
+		/* pinned to the top of the region; the scatter band starts below it */
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		text-align: center;
 		color: rgba(255, 255, 255, 0.78);
-		font-size: clamp(0.72rem, 0.95vw, 0.92rem);
+		font-size: clamp(0.58rem, 0.7vw, 0.72rem);
 		font-weight: 800;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
@@ -598,26 +790,36 @@
 	}
 
 	.zone-channel {
-		display: block;
-		width: fit-content;
+		/* left/top come from getScatterPosition; the translate centres the chip on
+		   that point so a wide name grows evenly either side of it. */
+		position: absolute;
+		/* re-enabled on top of the label's pointer-events: none */
+		pointer-events: auto;
+		transform: translate(-50%, -50%) rotate(var(--tilt, 0deg));
+		width: max-content;
+		max-width: 100%;
 		border: 0;
-		padding: 0.5rem 1rem;
+		padding: 0.28rem 0.6rem;
 		background: rgba(255, 255, 255, 0.08);
 		color: #fff;
-		font-size: clamp(0.9rem, 1.25vw, 1.24rem);
+		font-size: clamp(0.66rem, 0.85vw, 0.86rem);
 		font-weight: 800;
-		line-height: 1.1;
-		text-align: left;
+		line-height: 1.15;
+		white-space: nowrap;
 		cursor: pointer;
 		opacity: 0.94;
 		text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 		border-radius: 8px;
-		transition: all 0.2s ease;
+		transition:
+			background 0.2s ease,
+			transform 0.2s ease;
 	}
 
 	.zone-channel:hover {
 		background: rgba(255, 255, 255, 0.15);
-		transform: translateX(4px);
+		/* keep the tilt, or the chip would snap upright on hover */
+		transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(1.09);
+		z-index: 2;
 	}
 
 	.zone-channel.selected-channel {
@@ -627,7 +829,7 @@
 	}
 
 	.zone-placeholder {
-		font-size: 0.92rem;
+		font-size: 0.72rem;
 		font-weight: 700;
 		color: rgba(255, 255, 255, 0.78);
 	}
@@ -637,7 +839,8 @@
 		top: 22%;
 		right: 1rem;
 		z-index: 3;
-		width: min(180px, 18%);
+		/* widened to match the larger type; must stay inside the 23% lagoon band */
+		width: min(250px, 21%);
 		transition: opacity 0.3s ease;
 	}
 
@@ -648,18 +851,18 @@
 
 	.legend {
 		display: grid;
-		gap: 0.7rem;
+		gap: 0.95rem;
 	}
 
 	.legend-item {
 		display: flex;
 		align-items: center;
-		gap: 0.7rem;
+		gap: 0.8rem;
 		border: 0;
 		padding: 0;
 		background: transparent;
 		color: #111317;
-		font-size: clamp(1rem, 1.35vw, 1.22rem);
+		font-size: clamp(1.25rem, 1.7vw, 1.55rem);
 		font-weight: 800;
 		text-align: left;
 		cursor: pointer;
@@ -670,8 +873,9 @@
 	}
 
 	.legend-dot {
-		width: 1.25rem;
-		height: 1.25rem;
+		/* scaled with the label so the swatches don't look undersized beside it */
+		width: 1.6rem;
+		height: 1.6rem;
 		border-radius: 999px;
 		background: var(--dot-fill);
 		border: 3px solid var(--dot-stroke);
@@ -724,7 +928,7 @@
 		.legend-panel {
 			top: 18%;
 			right: 0.9rem;
-			width: min(170px, 20%);
+			width: min(215px, 22%);
 		}
 
 		.legend {
@@ -747,7 +951,7 @@
 			bottom: 0;
 			width: 100%;
 			height: 24%;
-			clip-path: polygon(0 20%, 17% 0, 37% 8%, 52% 0, 71% 10%, 100% 0, 100% 100%, 0 100%);
+			clip-path: url(#lagoon-coast-bottom);
 		}
 
 		.map-header {
@@ -755,9 +959,6 @@
 			right: 1.25rem;
 		}
 
-		.zone-label {
-			width: 38% !important;
-		}
 
 		.legend-panel {
 			top: auto;

@@ -63,14 +63,6 @@ src/
 └── app.d.ts            # Type definitions
 ```
 
-## Features
-
-- 🗺️ Interactive island-based visualization of Slack channels
-- 🎨 Thematic islands for different channel categories
-- 📱 Responsive design for all devices
-- 🔍 Channel discovery and exploration
-- ⚡ Fast loading with real Slack workspace data
-
 ## Environment Variables
 
 Required:

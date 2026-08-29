@@ -1,144 +1,204 @@
 {
   "channels": [
     {
-      "id": "C001",
-      "name": "welcome",
-      "zone": "community",
-      "description": "Welcome to our Slack workspace",
-      "memberCount": 156,
-      "topic": "Getting started guide and introductions",
-      "isPrivate": false,
-      "createdAt": "2024-01-01T00:00:00Z"
-    },
-    {
-      "id": "C002",
+      "id": "C0266FRGT",
       "name": "announcements",
       "zone": "community",
-      "description": "Important announcements",
-      "memberCount": 200,
-      "topic": "Company updates and news",
+      "description": "Welcome! This channel is where Hack Club HQ posts community-wide announcements. Questions? Head to <#C0C78SG9L>. New here? Check out <#C75M7C0SY> &amp; <#C0266FRGV>.",
+      "memberCount": 95529,
+      "topic": "Welcome one, welcome all!",
       "isPrivate": false,
-      "createdAt": "2024-01-05T08:00:00Z"
+      "createdAt": "2014-03-11T00:05:35.000Z"
     },
     {
-      "id": "C003",
-      "name": "introductions",
+      "id": "C0266FRGV",
+      "name": "lounge",
       "zone": "community",
-      "description": "Introduce yourself here",
-      "memberCount": 145,
-      "topic": "Member introductions and meet & greet",
+      "description": ":nyan-goose-honk-tail::nyancat_big: Hang out &amp; chat here! :hackclub: Also see: <#C0C78SG9L> <#C0EA9S0A0> <#C01504DCLVD> <#C0JDWKJVA> <#CD1JSG9UK> <#C01AS1YEM8A> <#C01D7AHKMPF>",
+      "memberCount": 80712,
+      "topic": ":nyan-goose-honk-tail::nyancat_big: Hang out &amp; chat here! :hackclub: Also see: <#C0C78SG9L> <#C0EA9S0A0> <#C01504DCLVD> <#C0JDWKJVA> <#CD1JSG9UK> <#C01AS1YEM8A> <#C01D7AHKMPF>",
       "isPrivate": false,
-      "createdAt": "2024-01-08T10:30:00Z"
+      "createdAt": "2014-03-11T00:05:35.000Z"
     },
     {
-      "id": "C004",
-      "name": "random",
+      "id": "C0C78SG9L",
+      "name": "hq",
+      "zone": "connect",
+      "description": "Development of Hack Club! Please only reply in threads, and ask questions in the main channel!",
+      "memberCount": 20637,
+      "topic": "[THREADED :thread:] Ask Hack Club HQ questions. Remember, responses an​d a​ll top-level messages should be questions/suggestions/stuff directly related to Hack Club or its staff! Use <#CN523HLKW> for HCB sup​port.",
+      "isPrivate": false,
+      "createdAt": "2015-10-09T22:26:12.000Z"
+    },
+    {
+      "id": "C0D845A5S",
+      "name": "college-apps",
+      "zone": "connect",
+      "description": "discussing college apps!",
+      "memberCount": 873,
+      "topic": "going through hell to buy a first class ticket to guantanamo bay",
+      "isPrivate": false,
+      "createdAt": "2015-10-27T02:03:05.000Z"
+    },
+    {
+      "id": "C0DCUUH7E",
+      "name": "music",
       "zone": "community",
-      "description": "Random discussions and memes",
+      "description": "Want to talk music with others hackers? Here's the place.",
+      "memberCount": 1032,
+      "topic": "share epic songs, dope music and ~controversial?~ music takes!",
+      "isPrivate": false,
+      "createdAt": "2015-10-28T22:32:40.000Z"
+    },
+    {
+      "id": "C0EA9S0A0",
+      "name": "code",
+      "zone": "software",
+      "description": "A wonderland of technical discussion. Reply in threads for clarity",
+      "memberCount": 37343,
+      "topic": "Receive help with your code! Please thread. This channel is not for sharing your project or advertising. Read the guidelines before you post!",
+      "isPrivate": false,
+      "createdAt": "2015-11-11T16:37:21.000Z"
+    },
+    {
+      "id": "C0H25HSLE",
+      "name": "gaming",
+      "zone": "community",
+      "description": "gaaaaames",
+      "memberCount": 246,
+      "topic": "",
+      "isPrivate": false,
+      "createdAt": "2015-12-19T22:27:45.000Z"
+    },
+    {
+      "id": "C0HNE8UUU",
+      "name": "studycorner",
+      "zone": "connect",
+      "description": "To do schoolwork together and help those in need of help.",
+      "memberCount": 2603,
+      "topic": "To do schoolwork together and help those in need of help.",
+      "isPrivate": false,
+      "createdAt": "2016-01-05T13:03:41.000Z"
+    },
+    {
+      "id": "C0JDWKJVA",
+      "name": "hack-night",
+      "zone": "ysws",
+      "description": "a friendly call to chat and procrastinate",
+      "memberCount": 5058,
+      "topic": "a friendly call to chat and procrastinate, whenever you want it to be. just start a huddle here (the :headphones: button) and ping \\@hack-night-ping (once per call)!",
+      "isPrivate": false,
+      "createdAt": "2016-01-14T09:17:38.000Z"
+    },
+    {
+      "id": "C0K3R2SD8",
+      "name": "linux",
+      "zone": "software",
+      "description": "Please don't try macOS Ventura!",
+      "memberCount": 1192,
+      "topic": ":thread: please - :linux::tuxspin: Linux, Unixes, BSD all the bunch! Also security, software, and perhaps hardware. Newcomers, ask your questions in this channel to keep it contained. (cliche about desktop distro here)",
+      "isPrivate": false,
+      "createdAt": "2016-01-21T23:42:15.000Z"
+    },
+    {
+      "id": "C0K88JP1V",
+      "name": "cult-of-orpheus",
+      "zone": "community",
+      "description": "Logs and suggested commands for Prophet Orpheus role playing game. Asks start with 'ASK:', suggestions start with 'SUGGEST:'",
+      "memberCount": 110,
+      "topic": ":smug-dino:",
+      "isPrivate": false,
+      "createdAt": "2016-01-24T07:21:39.000Z"
+    },
+    {
+      "id": "C0M8PUPU6",
+      "name": "ship",
+      "zone": "ysws",
+      "description": "[THREADED REPLIES. NO PROMOS] Share your projects with the rest of Hack Club (and the world!) :ship:\nShip right from your terminal: <https://u.nu/scsd2>",
+      "memberCount": 49637,
+      "topic": "[:thread:] Share your projects with the rest of Hack Club (and the world!) :ship:\nIf you want your post to show up on <http://hackclub.com/ship|hackclub.com/ship>, make sure you have an image or video attached and react with :scrappy:!",
+      "isPrivate": false,
+      "createdAt": "2016-02-13T21:52:53.000Z"
+    },
+    {
+      "id": "C0NP503L7",
+      "name": "hackathons",
+      "zone": "ysws",
+      "description": "Are you organizing a hackathon? Ask to join #hackathon-organizers, where we discuss the ups, downs, and mediums of organizing hackathons :rocket: No promotions, please!",
+      "memberCount": 3282,
+      "topic": "A place for hackathon attendees/admirers/fans! Join <#C03QSGGCJN7> if you're planning to run your own, where we discuss the ups, downs, and mediums of organizing hackathons :rocket: No promotions, please!",
+      "isPrivate": false,
+      "createdAt": "2016-02-24T00:59:45.000Z"
+    },
+    {
+      "id": "C0P5NE354",
+      "name": "bot-spam",
+      "zone": "community",
+      "description": "where the bots go beep boop",
+      "memberCount": 1514,
+      "topic": "Bot testing and spam — Channel I C0P5NE354 :hackclub:",
+      "isPrivate": false,
+      "createdAt": "2016-02-26T05:16:05.000Z"
+    },
+    {
+      "id": "C141CCD2Q",
+      "name": "spam",
+      "zone": "community",
+      "description": "U KNOW IT… asjhdaljkfhbadlkjdbnaojhwao;jhsa;oihjasoiuahs;iouash;oasuhas;kjhd;akjhdsalh;djsah;aldjhaskljdhsalkjhaslkjhdsalkjsdhlakjshdblkasd",
       "memberCount": 189,
-      "topic": "Off-topic conversations",
+      "topic": "spam spam spam baked beans and spam :smug-dino: :spam:\nｓｏｕｐ :spamton_laugh2:",
       "isPrivate": false,
-      "createdAt": "2024-01-10T14:00:00Z"
+      "createdAt": "2016-04-27T00:33:33.000Z"
     },
     {
-      "id": "S001",
-      "name": "backend",
-      "zone": "software",
-      "description": "Backend development discussions",
-      "memberCount": 8,
-      "topic": "Backend APIs and services",
-      "isPrivate": false,
-      "createdAt": "2024-02-10T10:00:00Z"
-    },
-    {
-      "id": "S002",
-      "name": "frontend",
-      "zone": "software",
-      "description": "Frontend development discussions",
-      "memberCount": 12,
-      "topic": "React, Vue, and UI frameworks",
-      "isPrivate": false,
-      "createdAt": "2024-02-12T11:00:00Z"
-    },
-    {
-      "id": "S003",
-      "name": "devops",
-      "zone": "software",
-      "description": "DevOps and infrastructure",
-      "memberCount": 5,
-      "topic": "CI/CD, Docker, and deployment",
-      "isPrivate": false,
-      "createdAt": "2024-02-15T09:00:00Z"
-    },
-    {
-      "id": "H001",
-      "name": "hardware",
+      "id": "C14D3AQTT",
+      "name": "packages",
       "zone": "hardware",
-      "description": "Hardware projects and discussions",
-      "memberCount": 6,
-      "topic": "Circuit design and embedded systems",
+      "description": "post your envelopes here",
+      "memberCount": 899,
+      "topic": ":hackclub: Hack Club goodies goin' around the world. Wheeeee! :earth_asia:",
       "isPrivate": false,
-      "createdAt": "2024-03-01T13:00:00Z"
+      "createdAt": "2016-04-28T02:40:25.000Z"
     },
     {
-      "id": "H002",
-      "name": "robotics",
-      "zone": "hardware",
-      "description": "Robotics projects",
-      "memberCount": 4,
-      "topic": "Mechanical design and automation",
+      "id": "C154GRSUS",
+      "name": "anime",
+      "zone": "community",
+      "description": "This channel is to talk about cool animes and to share new ones as well. Hit us with anything weeb tho, manga, J-pop, :homestuck:, and Vocaloid too.",
+      "memberCount": 299,
+      "topic": ":uwu_face: Weeb land and :homestuck:/:homestuck2: discussion also genshin cuz I said so",
       "isPrivate": false,
-      "createdAt": "2024-03-05T15:30:00Z"
+      "createdAt": "2016-04-30T08:32:28.000Z"
     },
     {
-      "id": "Y001",
-      "name": "ysws-general",
-      "zone": "ysws",
-      "description": "YSWS general discussion",
-      "memberCount": 78,
-      "topic": "Young Slack with Slack discussions",
+      "id": "C165V7XT9",
+      "name": "osu",
+      "zone": "community",
+      "description": "osu! - a free-to-win rhythm game. rhythm is just a _click_ away!",
+      "memberCount": 94,
+      "topic": "rhythm is a click away! | <https://osu.ppy.sh/>",
       "isPrivate": false,
-      "createdAt": "2024-03-10T08:00:00Z"
+      "createdAt": "2016-05-04T17:50:06.000Z"
     },
     {
-      "id": "Y002",
-      "name": "ysws-events",
-      "zone": "ysws",
-      "description": "YSWS events and meetups",
-      "memberCount": 92,
-      "topic": "Community events and workshops",
+      "id": "C1C3K2RQV",
+      "name": "design",
+      "zone": "software",
+      "description": "Iteratively get and give feedback on whatever you happen to be designing",
+      "memberCount": 1429,
+      "topic": "Share your designs with Hack Club. Maybe that is a screenshot, clip, Figma link, whatever! See also: <#C02EXAC2WR0>",
       "isPrivate": false,
-      "createdAt": "2024-03-12T10:00:00Z"
+      "createdAt": "2016-05-26T19:20:33.000Z"
     },
     {
-      "id": "CN001",
-      "name": "connect-community",
-      "zone": "connect",
-      "description": "Community connections",
-      "memberCount": 34,
-      "topic": "Building community relationships",
+      "id": "C1FV67WVB",
+      "name": "stickers",
+      "zone": "community",
+      "description": "Serious discussion on Hack Club's stickers",
+      "memberCount": 606,
+      "topic": "Serious discussion on Hack Club's stickers | <http://stickers.hackclub.com|stickers.hackclub.com>",
       "isPrivate": false,
-      "createdAt": "2024-04-01T12:00:00Z"
-    },
-    {
-      "id": "CN002",
-      "name": "mentorship",
-      "zone": "connect",
-      "description": "Mentorship opportunities",
-      "memberCount": 28,
-      "topic": "Pairing mentors with mentees",
-      "isPrivate": false,
-      "createdAt": "2024-04-05T14:00:00Z"
-    },
-    {
-      "id": "CN003",
-      "name": "networking",
-      "zone": "connect",
-      "description": "Networking and collaboration",
-      "memberCount": 45,
-      "topic": "Professional networking and partnerships",
-      "isPrivate": false,
-      "createdAt": "2024-04-08T11:00:00Z"
+      "createdAt": "2016-06-10T20:31:16.000Z"
     }
   ]
 }

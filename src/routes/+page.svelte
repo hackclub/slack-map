@@ -70,6 +70,7 @@
 	let selectedChannel: SlackChannel | null = null;
 	let isBooting = true;
 	let bootError = '';
+	let zoomedZoneKey: string | null = null;
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
 	$: zoneEntries = zones.map((zone) => ({
@@ -124,6 +125,10 @@
 	function getChannelsForZone(zoneKey: string) {
 		return channels.filter((channel) => getZoneForChannel(channel).key === zoneKey).slice(0, 8);
 	}
+
+	function toggleZoom(zoneKey: string) {
+		zoomedZoneKey = zoomedZoneKey === zoneKey ? null : zoneKey;
+	}
 </script>
 
 <svelte:head>
@@ -155,7 +160,13 @@
 				</div>
 			</header>
 
-			<svg class="terrain" viewBox="0 0 1100 800" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+			<svg
+				class="terrain"
+				class:zoomed={zoomedZoneKey !== null}
+				viewBox="0 0 1100 800"
+				preserveAspectRatio="xMidYMid meet"
+				aria-hidden="true"
+			>
 				<defs>
 					<filter id="island-shadow">
 						<feGaussianBlur in="SourceAlpha" stdDeviation="3" />
@@ -170,7 +181,14 @@
 					</filter>
 				</defs>
 				{#each zones as zone}
-					<g filter="url(#island-shadow)">
+					<g
+						filter="url(#island-shadow)"
+						class:zoomable={!zoomedZoneKey}
+						on:click={() => toggleZoom(zone.key)}
+						role="button"
+						tabindex="0"
+						on:keydown={(e) => e.key === 'Enter' && toggleZoom(zone.key)}
+					>
 						<path
 							d={zone.path}
 							fill={zone.fill}
@@ -178,31 +196,47 @@
 							stroke-width={selectedZoneKey === zone.key ? '4' : '3'}
 							stroke-linejoin="round"
 							opacity={selectedZoneKey && selectedZoneKey !== zone.key ? '0.78' : '1'}
+							class:zoomed-island={zoomedZoneKey === zone.key}
+							class:hidden-island={zoomedZoneKey && zoomedZoneKey !== zone.key}
 						/>
 					</g>
 				{/each}
 			</svg>
 
-			<div class="zone-labels">
+			<div class="zone-labels" class:zoomed={zoomedZoneKey !== null}>
 				{#each zoneEntries as zone}
 					<div
 						class:selected={selectedZoneKey === zone.key}
+						class:zoom-expanded={zoomedZoneKey === zone.key}
 						class="zone-label"
 						style={`left:${zone.labelX}%; top:${zone.labelY}%; width:${zone.labelWidth}%;`}
 					>
-						<p class="zone-title">{zone.label}</p>
-						{#if zone.channels.length}
-							{#each zone.channels as channel}
-								<button
-									class:selected-channel={selectedChannel?.id === channel.id}
-									class="zone-channel"
-									on:click={() => selectChannel(channel)}
-								>
-									#{channel.name}
-								</button>
-							{/each}
-						{:else}
-							<p class="zone-placeholder">No channels yet</p>
+						<button
+							class="zone-expand-btn"
+							on:click={() => toggleZoom(zone.key)}
+							aria-label={zoomedZoneKey === zone.key ? 'Zoom out' : 'Zoom in'}
+						>
+							{#if zoomedZoneKey === zone.key}
+								<span class="zone-title-zoom">{zone.label}</span>
+								<span class="zoom-close">×</span>
+							{:else}
+								<p class="zone-title">{zone.label}</p>
+							{/if}
+						</button>
+						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
+							{#if zone.channels.length}
+								{#each zone.channels as channel}
+									<button
+										class:selected-channel={selectedChannel?.id === channel.id}
+										class="zone-channel"
+										on:click={() => selectChannel(channel)}
+									>
+										#{channel.name}
+									</button>
+								{/each}
+							{:else}
+								<p class="zone-placeholder">No channels yet</p>
+							{/if}
 						{/if}
 					</div>
 				{/each}
@@ -374,6 +408,37 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
+		transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.terrain.zoomed g.zoomable {
+		pointer-events: none;
+	}
+
+	.terrain g.zoomable {
+		cursor: pointer;
+		transition: filter 0.3s ease;
+	}
+
+	.terrain g.zoomable:hover {
+		filter: brightness(1.1);
+	}
+
+	.terrain path.zoomed-island {
+		animation: zoomIn 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+	}
+
+	.terrain path.hidden-island {
+		opacity: 0.1 !important;
+	}
+
+	@keyframes zoomIn {
+		from {
+			filter: drop-shadow(0 0 20px rgba(0, 0, 0, 0.5));
+		}
+		to {
+			filter: drop-shadow(0 0 0 rgba(0, 0, 0, 0));
+		}
 	}
 
 	.zone-labels {
@@ -381,6 +446,12 @@
 		inset: 0;
 		z-index: 2;
 		pointer-events: none;
+		transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.zone-labels.zoomed {
+		background: rgba(0, 0, 0, 0.5);
+		pointer-events: auto;
 	}
 
 	.zone-label {
@@ -388,11 +459,72 @@
 		display: grid;
 		gap: 0.35rem;
 		pointer-events: auto;
+		transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.zone-label.zoom-expanded {
+		position: fixed;
+		inset: 0;
+		left: 50% !important;
+		top: 50% !important;
+		width: auto !important;
+		transform: translate(-50%, -50%);
+		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1.5rem;
+		background: rgba(29, 34, 44, 0.95);
+		border-radius: 24px;
+		padding: 2rem;
+		max-width: 90vw;
+		max-height: 90vh;
+		overflow-y: auto;
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 	}
 
 	.zone-label.selected .zone-channel,
 	.zone-label.selected .zone-title {
 		opacity: 1;
+	}
+
+	.zone-expand-btn {
+		border: 0;
+		background: transparent;
+		padding: 0;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		width: 100%;
+		font: inherit;
+	}
+
+	.zone-expand-btn:focus {
+		outline: 2px solid rgba(255, 255, 255, 0.3);
+		border-radius: 8px;
+		padding: 0.25rem;
+	}
+
+	.zone-title-zoom {
+		font-size: 2rem;
+		font-weight: 900;
+		color: #fff;
+		margin: 0;
+	}
+
+	.zoom-close {
+		font-size: 2.5rem;
+		color: rgba(255, 255, 255, 0.7);
+		line-height: 1;
+		transition: all 0.2s ease;
+	}
+
+	.zone-expand-btn:hover .zoom-close {
+		color: #fff;
+		transform: rotate(90deg);
 	}
 
 	.zone-title {
@@ -414,8 +546,8 @@
 		display: block;
 		width: fit-content;
 		border: 0;
-		padding: 0;
-		background: transparent;
+		padding: 0.5rem 1rem;
+		background: rgba(255, 255, 255, 0.08);
 		color: #fff;
 		font-size: clamp(0.9rem, 1.25vw, 1.24rem);
 		font-weight: 800;
@@ -424,6 +556,17 @@
 		cursor: pointer;
 		opacity: 0.94;
 		text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+		border-radius: 8px;
+		transition: all 0.2s ease;
+	}
+
+	.zone-channel:hover {
+		background: rgba(255, 255, 255, 0.15);
+		transform: translateX(4px);
+	}
+
+	.zone-expand-btn ~ .zone-channel {
+		font-size: 1.1rem;
 	}
 
 	.zone-channel.selected-channel {
@@ -444,6 +587,12 @@
 		right: 1rem;
 		z-index: 3;
 		width: min(180px, 18%);
+		transition: opacity 0.3s ease;
+	}
+
+	.zone-labels.zoomed ~ .legend-panel {
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.legend {

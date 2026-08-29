@@ -11,6 +11,15 @@
 	import { zoneForChannelName } from '../lib/zones.js';
 	import ChannelModal from '../lib/ChannelModal.svelte';
 	import { loadCustomEmoji } from '../lib/emoji.js';
+	import { growthScale, packChips, scalePath, scaleRect } from '../lib/islandLayout.js';
+	import { panzoom, type ViewBox } from '../lib/panzoom.js';
+
+	/**
+	 * Chip font expressed in viewBox units rather than px. The SVG is stretched to
+	 * the container, so packing must reason in the same space the chips are
+	 * positioned in — mixing px into it would misjudge widths at other zoom levels.
+	 */
+	const CHIP_FONT_UNITS = 13;
 
 	let customEmoji: Record<string, string> = {};
 
@@ -124,114 +133,68 @@
 	// Svelte compiles a template `{@const}` inside `$.untrack(...)`, so a store
 	// read in here would be invisible and the labels would stay frozen in their
 	// unzoomed spots while the map animated underneath them.
-	function getLabelPosition(zone: Zone, viewBox: { x: number; y: number; width: number; height: number }) {
-		const area = labelAreas[zone.key];
-		const vb = viewBox;
-
-		// One path for both states: unzoomed the viewBox is just the full map.
+	/** Project a viewBox-space rect onto the container as CSS percentages. */
+	function projectArea(area: LabelArea, viewBox: ViewBox) {
 		return {
-			left: `${((area.x - vb.x) / vb.width) * 100}%`,
-			top: `${((area.y - vb.y) / vb.height) * 100}%`,
-			width: `${(area.width / vb.width) * 100}%`,
-			height: `${(area.height / vb.height) * 100}%`
+			left: `${((area.x - viewBox.x) / viewBox.width) * 100}%`,
+			top: `${((area.y - viewBox.y) / viewBox.height) * 100}%`,
+			width: `${(area.width / viewBox.width) * 100}%`,
+			height: `${(area.height / viewBox.height) * 100}%`
 		};
 	}
 
-	// --- scattered channel placement -------------------------------------------
-	// Chips sit at pseudo-random spots inside their island rather than on a grid.
-	// Every position is derived from the channel name, never Math.random(): the
-	// server and client must agree during hydration, and a chip must not hop to a
-	// new spot every time the component re-renders.
-
-	function hashString(value: string) {
-		let hash = 2166136261;
-
-		for (let index = 0; index < value.length; index++) {
-			hash ^= value.charCodeAt(index);
-			hash = Math.imul(hash, 16777619);
-		}
-
-		return hash >>> 0;
-	}
-
-	/** mulberry32 — one stable float in [0,1) per seed. */
-	function seededRandom(seed: number) {
-		let t = (seed + 0x6d2b79f5) | 0;
-		t = Math.imul(t ^ (t >>> 15), t | 1);
-		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-	}
-
-	function greatestCommonDivisor(a: number, b: number): number {
-		return b === 0 ? a : greatestCommonDivisor(b, a % b);
-	}
-
-	// Horizontal/vertical share of the label box the scatter may use, the top band
-	// kept clear for the zone title, and how far a chip may drift inside its cell.
-	// These were grid-searched for zero chip-on-chip overlap and zero overflow
-	// across 1280..1920 wide viewports, against the labelAreas above. Re-run that
-	// search if a labelArea shrinks: `community` packs 8 chips into the tightest
-	// area and is the first to collide.
-	const SCATTER_SPREAD_X = 46;
-	const SCATTER_TOP = 22;
-	const SCATTER_BOTTOM = 97;
-	const SCATTER_JITTER_X = 0.4;
-	const SCATTER_JITTER_Y = 0.5;
-	// Chips are far wider than they are tall, so more than two per row collides.
-	const SCATTER_SINGLE_COLUMN_MAX = 3;
-
-	function getScatterPosition(zoneKey: string, name: string, index: number, total: number) {
-		const seed = hashString(`${zoneKey}:${name}`);
-
-		// Stratified sampling: hand each chip its own cell of a coarse grid, then
-		// jitter inside that cell. Pure random would clump and overlap; this keeps
-		// them apart while still reading as scattered.
-		const columns = total <= SCATTER_SINGLE_COLUMN_MAX ? 1 : 2;
-		const rows = Math.max(1, Math.ceil(total / columns));
-		const cellCount = columns * rows;
-
-		// Walking the cells with a stride coprime to the count visits each exactly
-		// once, so chips fill the island in a shuffled order instead of row by row.
-		let stride = 1 + (hashString(zoneKey) % Math.max(1, cellCount - 1));
-		while (greatestCommonDivisor(stride, cellCount) !== 1) stride++;
-		const cell = (index * stride) % cellCount;
-
-		const column = cell % columns;
-		const row = Math.floor(cell / columns);
-
-		const jitterX = (seededRandom(seed) - 0.5) * SCATTER_JITTER_X;
-		const jitterY = (seededRandom(seed ^ 0x9e3779b9) - 0.5) * SCATTER_JITTER_Y;
-
-		// -1..1 within the box, then pulled inside an inscribed ellipse so chips
-		// follow the blob's rounded silhouette instead of reaching into its corners.
-		let unitX = ((column + 0.5 + jitterX) / columns) * 2 - 1;
-		let unitY = ((row + 0.5 + jitterY) / rows) * 2 - 1;
-
-		const radius = Math.hypot(unitX, unitY);
-		if (radius > 0.95) {
-			unitX = (unitX / radius) * 0.95;
-			unitY = (unitY / radius) * 0.95;
-		}
-
+	/**
+	 * Chips carry absolute viewBox coordinates from the packer, so they are
+	 * expressed as a percentage of their own island's area to stay put when the
+	 * container resizes.
+	 */
+	function chipOffset(chip: { x: number; y: number }, area: LabelArea) {
 		return {
-			left: `${50 + unitX * SCATTER_SPREAD_X}%`,
-			top: `${SCATTER_TOP + (unitY * 0.5 + 0.5) * (SCATTER_BOTTOM - SCATTER_TOP)}%`,
-			tilt: ((seededRandom(seed ^ 0x85ebca6b) - 0.5) * 9).toFixed(2)
+			left: `${((chip.x - area.x) / area.width) * 100}%`,
+			top: `${((chip.y - area.y) / area.height) * 100}%`
 		};
 	}
+
+	// Chip placement now lives in islandLayout.ts: the old jittered-grid scatter
+	// and its grid-searched constants only guaranteed spacing for <= 8 chips per
+	// island, which no longer holds now that islands grow with their channel count.
 
 	// Named here so the reactive statement actually tracks the tween; the template
 	// only reads the finished map, which keeps the labels glued to their islands
-	// through the whole zoom animation.
+	// through the whole zoom animation. Cheap by design: it re-projects five rects
+	// per frame while panning, and never re-packs chips.
 	$: labelBoxes = Object.fromEntries(
-		zones.map((zone) => [zone.key, getLabelPosition(zone, $viewBoxTween)])
+		zoneEntries.map((zone) => [zone.key, projectArea(zone.area, $viewBoxTween)])
 	);
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
-	$: zoneEntries = zones.map((zone) => ({
-		...zone,
-		channels: getChannelsForZone(zone.key, channels)
-	}));
+	/**
+	 * Islands grow with their channel count, and chips are packed into their
+	 * grown text area.
+	 *
+	 * This depends on `channels` ONLY — never on the viewBox. Packing is the
+	 * expensive step, and dragging the map must not re-pack every chip on every
+	 * pointermove; only the container's screen position tracks the viewBox.
+	 */
+	$: zoneEntries = zones.map((zone) => {
+		const list = getChannelsForZone(zone.key, channels);
+		const bounds = islandBounds[zone.key];
+		const centreX = bounds.minX + bounds.width / 2;
+		const centreY = bounds.minY + bounds.height / 2;
+		const scale = growthScale(list.length);
+		const area = scaleRect(labelAreas[zone.key], centreX, centreY, scale);
+		const { chips, overflow } = packChips(zone.key, list, area, CHIP_FONT_UNITS);
+
+		return {
+			...zone,
+			channels: list,
+			path: scalePath(zone.path, centreX, centreY, scale),
+			area,
+			chips,
+			overflow,
+			scale
+		};
+	});
 
 	onMount(() => {
 		// Channels already arrived with the server render; only the optional emoji
@@ -280,8 +243,10 @@
 	// a `$:` statement only tracks what it names directly, so reading `channels`
 	// inside here would leave the dependency invisible and the map would never
 	// update once the fetch resolves.
+	// No slice here any more — MAX_CHIPS caps what gets rendered, and the surplus
+	// is surfaced as a "+N more" count instead of being silently dropped.
 	function getChannelsForZone(zoneKey: string, source: SlackChannel[] = channels) {
-		return source.filter((channel) => getZoneForChannel(channel).key === zoneKey).slice(0, 8);
+		return source.filter((channel) => getZoneForChannel(channel).key === zoneKey);
 	}
 
 	function toggleZoom(zoneKey: string) {
@@ -367,6 +332,12 @@
 				viewBox={svgViewBox}
 				preserveAspectRatio="none"
 				aria-hidden="true"
+				use:panzoom={{
+					get: () => $viewBoxTween,
+					set: (vb) => viewBoxTween.set(vb, { duration: 0 }),
+					bounds: { minWidth: 220, maxWidth: 2600 },
+					disabled: zoomedZoneKey !== null
+				}}
 			>
 				<defs>
 					<filter id="island-shadow">
@@ -381,7 +352,7 @@
 						</feMerge>
 					</filter>
 				</defs>
-				{#each zones as zone}
+				{#each zoneEntries as zone}
 					<g
 						filter="url(#island-shadow)"
 						class:zoomable={!zoomedZoneKey}
@@ -415,23 +386,22 @@
 					>
 						<p class="zone-title">{zone.label}</p>
 						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
-							{#if zone.channels.length}
-								{#each zone.channels as channel, index}
-									{@const spot = getScatterPosition(
-										zone.key,
-										channel.name,
-										index,
-										zone.channels.length
-									)}
+							{#if zone.chips.length}
+								{#each zone.chips as chip (chip.channel.id)}
+									{@const spot = chipOffset(chip, zone.area)}
 									<button
-										class:selected-channel={selectedChannel?.id === channel.id}
+										class:selected-channel={selectedChannel?.id === chip.channel.id}
 										class="zone-channel"
-										style={`left:${spot.left}; top:${spot.top}; --tilt:${spot.tilt}deg;`}
-										on:click={() => selectChannel(channel)}
+										style={`left:${spot.left}; top:${spot.top}; --tilt:${chip.tilt}deg;`}
+										title={`#${chip.channel.name}`}
+										on:click={() => selectChannel(chip.channel)}
 									>
-										#{channel.name}
+										{chip.label}
 									</button>
 								{/each}
+								{#if zone.overflow > 0}
+									<span class="zone-overflow">+{zone.overflow.toLocaleString()} more</span>
+								{/if}
 							{:else}
 								<p class="zone-placeholder">No channels yet</p>
 							{/if}
@@ -689,7 +659,7 @@
 
 	/*
 		Sized to its island's region by getLabelPosition. Chips are absolutely
-		placed inside it by getScatterPosition, so this is just their containing
+		placed inside it by the packer in islandLayout.ts, so this is just their
 		block — a fixed-anchor column used to overflow the coastline once a zone
 		held more than a few channels.
 	*/
@@ -803,7 +773,7 @@
 	}
 
 	.zone-channel {
-		/* left/top come from getScatterPosition; the translate centres the chip on
+		/* left/top come from the packer; the translate centres the chip on
 		   that point so a wide name grows evenly either side of it. */
 		position: absolute;
 		/* re-enabled on top of the label's pointer-events: none */
@@ -839,6 +809,22 @@
 		text-decoration: underline;
 		text-decoration-thickness: 0.18rem;
 		text-underline-offset: 0.2rem;
+	}
+
+	/* Sits bottom-centre of the island: the channels the cap could not fit. */
+	.zone-overflow {
+		position: absolute;
+		left: 50%;
+		bottom: 0;
+		transform: translateX(-50%);
+		padding: 0.2rem 0.55rem;
+		border-radius: 999px;
+		background: rgba(0, 0, 0, 0.28);
+		color: rgba(255, 255, 255, 0.72);
+		font-size: 0.66rem;
+		font-weight: 800;
+		white-space: nowrap;
+		pointer-events: none;
 	}
 
 	.zone-placeholder {

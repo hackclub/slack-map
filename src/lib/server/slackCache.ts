@@ -14,10 +14,19 @@ import type { SlackChannel } from '../slack.js';
  * small, public to the workspace, and cheap to rebuild.
  */
 
-const FRESH_MS = 5 * 60 * 1000;
+// A full crawl takes ~15-20s, so it must not re-run every few minutes.
+const FRESH_MS = 30 * 60 * 1000;
 // Past FRESH_MS the cached list is still served immediately while a refresh runs
 // in the background, so a visitor never pays for the revalidation.
 const STALE_MS = 60 * 60 * 1000;
+
+// ~200 channels per page. Hack Club has 5000+, so this is a deliberate ceiling
+// on crawl time rather than a guess at the workspace size. Each page costs one
+// Tier 2 call, and the map only renders a few hundred chips anyway, so crawling
+// the whole workspace would spend the rate-limit budget for no visible gain.
+const MAX_PAGES = 8;
+// Tier 2 allows roughly 20 requests/minute; pacing avoids tripping it at all.
+const PAGE_DELAY_MS = 1200;
 
 type Entry = { channels: SlackChannel[]; at: number };
 
@@ -29,17 +38,64 @@ async function fetchFromSlack(): Promise<SlackChannel[]> {
 	const token = env.SLACK_BOT_TOKEN;
 	if (!token) throw new Error('Missing Slack token');
 
-	const response = await fetch(
-		'https://slack.com/api/conversations.list?exclude_archived=true&types=public_channel,private_channel&limit=200',
-		{ headers: { Authorization: `Bearer ${token}` } }
-	);
-	const data = await response.json();
+	const all: SlackChannel[] = [];
+	let cursor = '';
+	let pages = 0;
 
-	if (!data.ok) throw new Error(data.error ?? 'Slack request failed');
+	// conversations.list is paginated and returns ~200 per page. Reading only the
+	// first page silently truncated the workspace to 24 channels.
+	do {
+		const url =
+			'https://slack.com/api/conversations.list' +
+			'?exclude_archived=true&types=public_channel,private_channel&limit=200' +
+			(cursor ? `&cursor=${encodeURIComponent(cursor)}` : '');
+
+		const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+
+		// conversations.list is Tier 2 (~20 req/min). A burst of pages trips it, and
+		// Slack answers 429 with Retry-After. Wait it out once, then give up on the
+		// remaining pages rather than failing the whole load.
+		if (response.status === 429) {
+			const wait = Number(response.headers.get('retry-after') ?? '5');
+			console.warn(`[slack] rate limited, waiting ${wait}s (page ${pages + 1})`);
+			await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 30) * 1000));
+
+			const retry = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+			const retryData = await retry.json();
+			if (!retry.ok || !retryData.ok) break;
+
+			all.push(...((retryData.channels ?? []) as SlackChannel[]));
+			cursor = retryData.response_metadata?.next_cursor ?? '';
+			pages++;
+			continue;
+		}
+
+		const data = await response.json();
+
+		if (!data.ok) {
+			// Partial results beat none: keep whatever pages already succeeded.
+			if (all.length) {
+				console.warn(`[slack] stopped after ${pages} page(s): ${data.error}`);
+				break;
+			}
+			throw new Error(data.error ?? 'Slack request failed');
+		}
+
+		all.push(...((data.channels ?? []) as SlackChannel[]));
+		cursor = data.response_metadata?.next_cursor ?? '';
+		pages++;
+
+		// Stay under the tier limit rather than sprinting into a 429.
+		if (cursor && pages < MAX_PAGES) {
+			await new Promise((resolve) => setTimeout(resolve, PAGE_DELAY_MS));
+		}
+	} while (cursor && pages < MAX_PAGES);
 
 	// Rare by design — if this logs on every page view, the cache is not working.
-	console.log(`[slack] fetched ${data.channels?.length ?? 0} channels`);
-	return (data.channels ?? []) as SlackChannel[];
+	console.log(`[slack] fetched ${all.length} channels across ${pages} page(s)`);
+
+	// Busiest first, so the per-island cap keeps the channels people care about.
+	return all.sort((a, b) => (b.num_members ?? 0) - (a.num_members ?? 0));
 }
 
 function refresh(): Promise<SlackChannel[]> {

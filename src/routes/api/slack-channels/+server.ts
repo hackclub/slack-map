@@ -1,36 +1,27 @@
-import { env } from '$env/dynamic/private';
 import type { RequestHandler } from '@sveltejs/kit';
+import { getChannels, invalidateChannels } from '$lib/server/slackCache.js';
 
-export const GET: RequestHandler = async () => {
-	const token = env.SLACK_BOT_TOKEN;
-
-	if (!token) {
-		console.error('Missing Slack token');
-		return new Response(JSON.stringify({ error: 'Missing Slack token' }), { status: 500 });
-	}
+export const GET: RequestHandler = async ({ url }) => {
+	// ?refresh=1 backs the page's "Try again" button.
+	if (url.searchParams.get('refresh')) invalidateChannels();
 
 	try {
-		const response = await fetch(
-			'https://slack.com/api/conversations.list?exclude_archived=true&types=public_channel,private_channel',
-			{
-				headers: {
-					Authorization: `Bearer ${token}`
-				}
+		const { channels, state, error } = await getChannels();
+
+		return new Response(JSON.stringify({ channels, state, error }), {
+			status: 200,
+			headers: {
+				'content-type': 'application/json',
+				// Browsers may reuse this briefly; the server cache does the real work.
+				'cache-control': 'public, max-age=60, stale-while-revalidate=300'
 			}
-		);
-		const data = await response.json();
-
-		if (!data.ok) {
-			console.error('Slack API error:', data.error);
-			return new Response(JSON.stringify({ error: data.error }), { status: 500 });
-		}
-
-		return new Response(JSON.stringify({ channels: data.channels }), { status: 200 });
+		});
 	} catch (error) {
-		console.error('Fetch error:', error);
-		return new Response(
-			JSON.stringify({ error: 'Fetch error', details: String(error) }),
-			{ status: 500 }
-		);
+		const message = error instanceof Error ? error.message : 'Fetch error';
+		console.error('slack-channels failed:', message);
+		return new Response(JSON.stringify({ error: message }), {
+			status: 500,
+			headers: { 'content-type': 'application/json' }
+		});
 	}
 };

@@ -10,6 +10,9 @@
 	} from '../lib/slack.js';
 	import { zoneForChannelName } from '../lib/zones.js';
 	import ChannelModal from '../lib/ChannelModal.svelte';
+	import { loadCustomEmoji } from '../lib/emoji.js';
+
+	let customEmoji: Record<string, string> = {};
 
 
 	let modalChannel: SlackChannelDetails | null = null;
@@ -77,10 +80,16 @@
 		hardware: { minX: 486, minY: 468, width: 354, height: 328 }
 	};
 
-	let channels: SlackChannel[] = [];
+	import type { PageData } from './$types.js';
+
+	export let data: PageData;
+
+	// Seeded from the server load, so the very first paint already has channels
+	// instead of showing "No channels yet" until a client fetch resolves.
+	let channels: SlackChannel[] = data.channels;
 	let selectedChannel: SlackChannel | null = null;
-	let isBooting = true;
-	let bootError = '';
+	let isBooting = false;
+	let bootError = data.loadError;
 	let zoomedZoneKey: string | null = null;
 
 	const viewBoxTween = tweened(
@@ -224,20 +233,23 @@
 		channels: getChannelsForZone(zone.key, channels)
 	}));
 
-	onMount(async () => {
-		await loadChannels();
+	onMount(() => {
+		// Channels already arrived with the server render; only the optional emoji
+		// map still needs fetching, and a failure there never blocks the map.
+		void loadCustomEmoji().then((map) => {
+			customEmoji = map;
+		});
 	});
 
+	/** Manual retry — forces the server to bypass its cache. */
 	async function loadChannels() {
 		isBooting = true;
 		bootError = '';
 
 		try {
-			channels = await fetchChannels();
-			selectedChannel = channels[0] ?? null;
+			channels = await fetchChannels({ refresh: true });
 		} catch (error) {
 			bootError = error instanceof Error ? error.message : 'Unable to load workspace';
-			selectedChannel = null;
 		} finally {
 			isBooting = false;
 		}
@@ -476,6 +488,7 @@
 		channel={modalChannel}
 		loading={modalLoading}
 		error={modalError}
+		emoji={customEmoji}
 		on:close={() => (modalOpen = false)}
 	/>
 {/if}

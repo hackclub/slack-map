@@ -48,8 +48,10 @@ async function readJson<T>(response: Response): Promise<T> {
 	return payload as T;
 }
 
-export async function fetchChannels(): Promise<SlackChannel[]> {
-	const response = await fetch('/api/slack-channels');
+export async function fetchChannels(options?: { refresh?: boolean }): Promise<SlackChannel[]> {
+	// `refresh` tells the server to drop its cache — used by the retry button.
+	const url = options?.refresh ? '/api/slack-channels?refresh=1' : '/api/slack-channels';
+	const response = await fetch(url);
 	const payload = await readJson<{ channels: SlackChannel[] }>(response);
 	return payload.channels;
 }

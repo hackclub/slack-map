@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import { channelUrl, formatSlackText, type SlackChannelDetails } from './slack.js';
+	import { parseEmoji } from './emoji.js';
+
+	/** Custom emoji already loaded; passed in so the map is a tracked dependency. */
+	export let emoji: Record<string, string> = {};
 
 	export let channel: SlackChannelDetails | null = null;
 	export let loading = false;
@@ -21,8 +25,12 @@
 				day: 'numeric'
 			})
 		: null;
-	$: purpose = formatSlackText(channel?.purpose?.value);
-	$: topic = formatSlackText(channel?.topic?.value);
+	// `emoji` is passed in rather than read from module state, so these recompute
+	// when the custom map arrives instead of freezing at the first render.
+	$: purposeText = formatSlackText(channel?.purpose?.value);
+	$: topicText = formatSlackText(channel?.topic?.value);
+	$: purpose = parseEmoji(purposeText, emoji);
+	$: topic = parseEmoji(topicText, emoji);
 
 	function onKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') close();
@@ -63,8 +71,24 @@
 				</div>
 			</header>
 
-			{#if purpose}<p class="purpose">{purpose}</p>{/if}
-			{#if topic && topic !== purpose}<p class="topic">{topic}</p>{/if}
+			{#if purposeText}
+				<p class="purpose">
+					{#each purpose as part}
+						{#if part.kind === 'image'}
+							<img class="emoji" src={part.url} alt={`:${part.name}:`} title={`:${part.name}:`} loading="lazy" />
+						{:else}{part.value}{/if}
+					{/each}
+				</p>
+			{/if}
+			{#if topicText && topicText !== purposeText}
+				<p class="topic">
+					{#each topic as part}
+						{#if part.kind === 'image'}
+							<img class="emoji" src={part.url} alt={`:${part.name}:`} title={`:${part.name}:`} loading="lazy" />
+						{:else}{part.value}{/if}
+					{/each}
+				</p>
+			{/if}
 
 			<dl class="stats">
 				{#if memberCount}
@@ -173,6 +197,15 @@
 		font-size: 0.9rem;
 		line-height: 1.45;
 		color: rgba(255, 255, 255, 0.62);
+	}
+
+	/* Custom Slack emoji. Animated ones are GIFs and play on their own. */
+	.emoji {
+		display: inline-block;
+		width: 1.25em;
+		height: 1.25em;
+		vertical-align: -0.25em;
+		object-fit: contain;
 	}
 
 	.stats {

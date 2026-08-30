@@ -24,12 +24,19 @@ export type PlacedChip = {
 	tilt: number;
 };
 
-/** Chips each island was authored to hold comfortably at scale 1. */
-const BASE_CAPACITY = 8;
-const MAX_SCALE = 2.6;
+/**
+ * Ceiling on chips rendered per island; the rest become a "+N more" count.
+ *
+ * Islands are NEVER resized to fit more channels. Scaling them about their
+ * centroids destroyed the 15px coastline separation the layout was verified
+ * against — every island pair overlapped and chips from different islands
+ * collided on screen. Extra channels are revealed by zooming into an island
+ * instead, which enlarges its area on screen without moving any coastline.
+ */
+export const MAX_CHIPS = 24;
 
-/** Hard ceiling on chips rendered per island; the rest become a "+N more" count. */
-export const MAX_CHIPS = 60;
+/** Zooming into one island gives it the whole viewport, so far more fits. */
+export const MAX_CHIPS_ZOOMED = 150;
 
 const GAP_X = 10;
 const GAP_Y = 8;
@@ -68,21 +75,14 @@ export function scalePath(d: string, cx: number, cy: number, k: number) {
 }
 
 /**
- * Area grows with the square root of the channel count so chip *density* stays
- * constant; growing linearly would leave a busy island looking sparse.
+ * Chip size expressed in viewBox units for a given zoom level.
+ *
+ * Chips render at a fixed CSS pixel size, so as the viewBox narrows each chip
+ * covers proportionally fewer viewBox units — which is exactly why a zoomed
+ * island fits many more of them without anything moving.
  */
-export function growthScale(count: number) {
-	return Math.min(MAX_SCALE, Math.max(1, Math.sqrt(count / BASE_CAPACITY)));
-}
-
-/** Scale a rect about a point, matching whatever scalePath did to the island. */
-export function scaleRect(rect: Rect, cx: number, cy: number, k: number): Rect {
-	return {
-		x: cx + (rect.x - cx) * k,
-		y: cy + (rect.y - cy) * k,
-		width: rect.width * k,
-		height: rect.height * k
-	};
+export function chipFontUnits(baseUnits: number, viewBoxWidth: number, fullWidth = 1100) {
+	return baseUnits * (viewBoxWidth / fullWidth);
 }
 
 /**
@@ -122,9 +122,10 @@ export function packChips(
 	zoneKey: string,
 	channels: SlackChannel[],
 	area: Rect,
-	fontUnits: number
+	fontUnits: number,
+	maxChips: number = MAX_CHIPS
 ): PackResult {
-	const visible = channels.slice(0, MAX_CHIPS);
+	const visible = channels.slice(0, maxChips);
 	const overflow = channels.length - visible.length;
 
 	type Item = { channel: SlackChannel; label: string; w: number; h: number };

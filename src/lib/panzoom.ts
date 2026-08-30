@@ -17,11 +17,15 @@ export type PanZoomOptions = {
  */
 export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	let opts = options;
+	/** Pointer is down but has not yet moved far enough to count as a drag. */
+	let pending = false;
 	let dragging = false;
-	let moved = false;
 	let startX = 0;
 	let startY = 0;
 	let startViewBox: ViewBox | null = null;
+
+	/** Movement before a press becomes a pan rather than a click. */
+	const DRAG_THRESHOLD_PX = 4;
 
 	function applyCursor() {
 		node.style.cursor = opts.disabled ? '' : dragging ? 'grabbing' : 'grab';
@@ -39,21 +43,30 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	function onPointerDown(event: PointerEvent) {
 		if (opts.disabled || event.button !== 0) return;
 
-		dragging = true;
-		moved = false;
+		// Deliberately NOT capturing the pointer here. setPointerCapture retargets
+		// later pointer events to this <svg>, which makes the browser dispatch the
+		// click to the <svg> instead of the <g> under the cursor — that silently
+		// killed click-to-zoom on the islands. Capture only once a real drag starts.
+		pending = true;
+		dragging = false;
 		startX = event.clientX;
 		startY = event.clientY;
 		startViewBox = opts.get();
-		node.setPointerCapture(event.pointerId);
-		applyCursor();
 	}
 
 	function onPointerMove(event: PointerEvent) {
-		if (!dragging || !startViewBox) return;
+		if (!pending || !startViewBox) return;
 
 		const dx = event.clientX - startX;
 		const dy = event.clientY - startY;
-		if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+
+		if (!dragging) {
+			if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return;
+			// Past the threshold this is a pan, so take the pointer now.
+			dragging = true;
+			node.setPointerCapture(event.pointerId);
+			applyCursor();
+		}
 
 		const scale = unitsPerPixel();
 		opts.set({
@@ -64,15 +77,17 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	}
 
 	function onPointerUp(event: PointerEvent) {
-		if (!dragging) return;
+		if (!pending) return;
 
+		const wasDragging = dragging;
+		pending = false;
 		dragging = false;
 		startViewBox = null;
 		if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
 		applyCursor();
 
-		// A drag must not also register as a click on the island underneath.
-		if (moved) {
+		// Only a real drag suppresses the click; a plain press must still zoom.
+		if (wasDragging) {
 			const swallow = (e: Event) => e.stopPropagation();
 			node.addEventListener('click', swallow, { capture: true, once: true });
 			setTimeout(() => node.removeEventListener('click', swallow, { capture: true }), 0);

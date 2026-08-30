@@ -11,7 +11,12 @@
 	import { zoneForChannelName } from '../lib/zones.js';
 	import ChannelModal from '../lib/ChannelModal.svelte';
 	import { loadCustomEmoji } from '../lib/emoji.js';
-	import { growthScale, packChips, scalePath, scaleRect } from '../lib/islandLayout.js';
+	import {
+		chipFontUnits,
+		packChips,
+		MAX_CHIPS,
+		MAX_CHIPS_ZOOMED
+	} from '../lib/islandLayout.js';
 	import { panzoom, type ViewBox } from '../lib/panzoom.js';
 
 	/**
@@ -20,6 +25,9 @@
 	 * positioned in — mixing px into it would misjudge widths at other zoom levels.
 	 */
 	const CHIP_FONT_UNITS = 13;
+
+	/** Margin left around an island when zoomed into it. */
+	const ZOOM_PADDING = 15;
 
 	let customEmoji: Record<string, string> = {};
 
@@ -169,31 +177,38 @@
 
 	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
 	/**
-	 * Islands grow with their channel count, and chips are packed into their
-	 * grown text area.
+	 * Chips packed into each island's fixed text area.
 	 *
-	 * This depends on `channels` ONLY — never on the viewBox. Packing is the
-	 * expensive step, and dragging the map must not re-pack every chip on every
-	 * pointermove; only the container's screen position tracks the viewBox.
+	 * Islands are never resized — the coastlines and their verified 15px
+	 * separation stay exactly as authored. More channels appear by zooming into
+	 * an island: that narrows the viewBox, so each chip covers fewer viewBox
+	 * units and far more of them fit in the same area.
+	 *
+	 * Depends on `channels` and `zoomedZoneKey` only — both discrete. It must not
+	 * depend on the viewBox tween, or every frame of the zoom animation (and every
+	 * pointermove while panning) would re-pack every chip.
 	 */
 	$: zoneEntries = zones.map((zone) => {
 		const list = getChannelsForZone(zone.key, channels);
-		const bounds = islandBounds[zone.key];
-		const centreX = bounds.minX + bounds.width / 2;
-		const centreY = bounds.minY + bounds.height / 2;
-		const scale = growthScale(list.length);
-		const area = scaleRect(labelAreas[zone.key], centreX, centreY, scale);
-		const { chips, overflow } = packChips(zone.key, list, area, CHIP_FONT_UNITS);
+		const area = labelAreas[zone.key];
+		const isZoomed = zoomedZoneKey === zone.key;
 
-		return {
-			...zone,
-			channels: list,
-			path: scalePath(zone.path, centreX, centreY, scale),
+		// Matches the viewBox toggleZoom settles on, so packing agrees with what
+		// the viewer ends up seeing.
+		const zoomedWidth = islandBounds[zone.key].width + ZOOM_PADDING * 2;
+		const fontUnits = isZoomed
+			? chipFontUnits(CHIP_FONT_UNITS, zoomedWidth)
+			: CHIP_FONT_UNITS;
+
+		const { chips, overflow } = packChips(
+			zone.key,
+			list,
 			area,
-			chips,
-			overflow,
-			scale
-		};
+			fontUnits,
+			isZoomed ? MAX_CHIPS_ZOOMED : MAX_CHIPS
+		);
+
+		return { ...zone, channels: list, area, chips, overflow };
 	});
 
 	onMount(() => {
@@ -257,12 +272,11 @@
 			zoomedZoneKey = zoneKey;
 			const bounds = islandBounds[zoneKey];
 			if (bounds) {
-				const padding = 15;
 				viewBoxTween.set({
-					x: bounds.minX - padding,
-					y: bounds.minY - padding,
-					width: bounds.width + padding * 2,
-					height: bounds.height + padding * 2
+					x: bounds.minX - ZOOM_PADDING,
+					y: bounds.minY - ZOOM_PADDING,
+					width: bounds.width + ZOOM_PADDING * 2,
+					height: bounds.height + ZOOM_PADDING * 2
 				});
 			}
 		}
@@ -408,17 +422,23 @@
 						{/if}
 					</div>
 				{/each}
-				{#if zoomedZoneKey}
-					<div class="zone-title-zoom">{zones.find(z => z.key === zoomedZoneKey)?.label}</div>
-					<button
-						class="zoom-close"
-						on:click={() => toggleZoom(zoomedZoneKey!)}
-						aria-label="Zoom out"
-					>
-						×
-					</button>
-				{/if}
 			</div>
+
+			<!--
+				Deliberately outside .zone-labels. That container sets z-index: 2, which
+				creates a stacking context, so a child's z-index is confined to it — the
+				close button ended up beneath the z-index: 3 header and was unclickable.
+			-->
+			{#if zoomedZoneKey}
+				<div class="zone-title-zoom">{zones.find((z) => z.key === zoomedZoneKey)?.label}</div>
+				<button
+					class="zoom-close"
+					on:click={() => toggleZoom(zoomedZoneKey!)}
+					aria-label="Zoom out"
+				>
+					×
+				</button>
+			{/if}
 
 			<aside class="legend-panel">
 				<nav class="legend" aria-label="Channel categories">
@@ -701,12 +721,11 @@
 		display: none;
 	}
 
-	/* The island fills the viewport when enlarged, so the chips grow with it. */
-	.zone-label.zoom-expanded .zone-channel {
-		font-size: clamp(1rem, 1.5vw, 1.5rem);
-		padding: 0.5rem 1rem;
-		border-radius: 12px;
-	}
+	/*
+		Chips deliberately keep their normal size when an island is enlarged.
+		Growing them would cancel out the extra room the zoom creates, and showing
+		more channels is the whole point of zooming in.
+	*/
 
 	.zone-label.selected .zone-channel,
 	.zone-label.selected .zone-title {

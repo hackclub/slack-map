@@ -118,13 +118,32 @@ function fitLabel(name: string, fontUnits: number, maxWidth: number) {
 
 export type PackResult = { chips: PlacedChip[]; overflow: number };
 
+/**
+ * Bands at the top and bottom of the label area that chips must keep clear.
+ *
+ * The zone title is pinned to the top of the area and the "+N more" badge to
+ * the bottom. Packing across the full height put chips straight underneath both
+ * — the heading became unreadable against the first row of chips.
+ */
+export type Reserve = { top: number; bottom: number };
+
 export function packChips(
 	zoneKey: string,
 	channels: SlackChannel[],
-	area: Rect,
+	fullArea: Rect,
 	fontUnits: number,
-	maxChips: number = MAX_CHIPS
+	maxChips: number = MAX_CHIPS,
+	reserve: Reserve = { top: 0, bottom: 0 }
 ): PackResult {
+	// Chips are laid out inside the area minus the reserved bands; callers still
+	// position them against `fullArea`, so the coordinates stay comparable.
+	const area: Rect = {
+		x: fullArea.x,
+		y: fullArea.y + reserve.top,
+		width: fullArea.width,
+		height: Math.max(fontUnits * 2, fullArea.height - reserve.top - reserve.bottom)
+	};
+
 	const visible = channels.slice(0, maxChips);
 	const overflow = channels.length - visible.length;
 

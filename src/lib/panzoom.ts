@@ -5,6 +5,19 @@ export type PanZoomOptions = {
 	set: (viewBox: ViewBox) => void;
 	/** Zoom limits, expressed as viewBox width. */
 	bounds?: { minWidth: number; maxWidth: number };
+	/**
+	 * The map's own extent. The view is never allowed outside it, so the whole
+	 * map is the furthest you can zoom out and panning cannot strand the islands
+	 * off in empty space.
+	 */
+	world?: ViewBox;
+	/**
+	 * The current view, passed as a plain value rather than read through `get`.
+	 * Svelte only tracks what an options literal names directly, so without this
+	 * the action's `update` never runs on a zoom and the cursor goes stale — it
+	 * stayed unset after clicking into an island, where panning IS possible.
+	 */
+	view?: ViewBox;
 	/** Disables interaction — used while an island is zoom-expanded. */
 	disabled?: boolean;
 };
@@ -27,9 +40,46 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	/** Movement before a press becomes a pan rather than a click. */
 	const DRAG_THRESHOLD_PX = 4;
 
-	function applyCursor() {
-		node.style.cursor = opts.disabled ? '' : dragging ? 'grabbing' : 'grab';
+	/**
+	 * There is only somewhere to pan once the view is smaller than the map. At
+	 * full extent the clamp pins the view at the origin, so offering a grab
+	 * cursor there would advertise a drag that cannot move anything.
+	 */
+	function canPan() {
+		if (opts.disabled) return false;
+
+		const world = opts.world;
+		if (!world) return true;
+
+		const viewBox = opts.view ?? opts.get();
+		return viewBox.width < world.width - 0.5 || viewBox.height < world.height - 0.5;
 	}
+
+	function applyCursor() {
+		node.style.cursor = !canPan() ? '' : dragging ? 'grabbing' : 'grab';
+	}
+
+	/**
+	 * Keep the view inside the map: never wider or taller than the map itself,
+	 * and never scrolled past an edge. Without this you can zoom out into empty
+	 * space around the islands, or drag them off screen entirely.
+	 */
+	function clamp(viewBox: ViewBox): ViewBox {
+		const world = opts.world;
+		if (!world) return viewBox;
+
+		const width = Math.min(viewBox.width, world.width);
+		const height = Math.min(viewBox.height, world.height);
+
+		return {
+			width,
+			height,
+			x: Math.min(Math.max(viewBox.x, world.x), world.x + world.width - width),
+			y: Math.min(Math.max(viewBox.y, world.y), world.y + world.height - height)
+		};
+	}
+
+	const commit = (viewBox: ViewBox) => opts.set(clamp(viewBox));
 
 	/**
 	 * Pointer deltas arrive in screen pixels; converting through the current
@@ -41,7 +91,9 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	}
 
 	function onPointerDown(event: PointerEvent) {
-		if (opts.disabled || event.button !== 0) return;
+		// Not just cosmetic: starting a drag with nowhere to pan would still mark
+		// the gesture as a drag and swallow the click that zooms into an island.
+		if (!canPan() || event.button !== 0) return;
 
 		// Deliberately NOT capturing the pointer here. setPointerCapture retargets
 		// later pointer events to this <svg>, which makes the browser dispatch the
@@ -69,7 +121,7 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		}
 
 		const scale = unitsPerPixel();
-		opts.set({
+		commit({
 			...startViewBox,
 			x: startViewBox.x - dx * scale,
 			y: startViewBox.y - dy * scale
@@ -100,9 +152,11 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 
 		const viewBox = opts.get();
 		const { minWidth = 200, maxWidth = 4000 } = opts.bounds ?? {};
+		// The map's own width is the real outer limit, whatever bounds say.
+		const outer = Math.min(maxWidth, opts.world?.width ?? maxWidth);
 
 		const factor = Math.exp(event.deltaY * 0.0012);
-		const width = Math.min(maxWidth, Math.max(minWidth, viewBox.width * factor));
+		const width = Math.min(outer, Math.max(minWidth, viewBox.width * factor));
 		const height = width * (viewBox.height / viewBox.width);
 
 		// Anchor the zoom on the cursor, not the origin, so the point under the
@@ -111,12 +165,15 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		const fx = rect.width ? (event.clientX - rect.left) / rect.width : 0.5;
 		const fy = rect.height ? (event.clientY - rect.top) / rect.height : 0.5;
 
-		opts.set({
+		commit({
 			x: viewBox.x + (viewBox.width - width) * fx,
 			y: viewBox.y + (viewBox.height - height) * fy,
 			width,
 			height
 		});
+
+		// Zooming is what changes whether panning is possible at all.
+		applyCursor();
 	}
 
 	node.style.touchAction = 'none';

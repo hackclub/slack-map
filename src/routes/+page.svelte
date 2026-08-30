@@ -188,24 +188,43 @@
 	 * depend on the viewBox tween, or every frame of the zoom animation (and every
 	 * pointermove while panning) would re-pack every chip.
 	 */
+	/**
+	 * Current zoom level, quantised into steps.
+	 *
+	 * Chip capacity tracks how far in you are: the further you zoom, the fewer
+	 * viewBox units each fixed-size chip covers, so more of them fit. Packing off
+	 * the raw tween would re-pack every animation frame and every pointermove
+	 * while panning; rounding to 50-unit steps means it only recomputes when you
+	 * actually cross a level.
+	 */
+	const ZOOM_QUANTUM = 50;
+	$: packWidth =
+		Math.max(ZOOM_QUANTUM, Math.round($viewBoxTween.width / ZOOM_QUANTUM) * ZOOM_QUANTUM);
+
 	$: zoneEntries = zones.map((zone) => {
 		const list = getChannelsForZone(zone.key, channels);
 		const area = labelAreas[zone.key];
 		const isZoomed = zoomedZoneKey === zone.key;
 
-		// Matches the viewBox toggleZoom settles on, so packing agrees with what
-		// the viewer ends up seeing.
-		const zoomedWidth = islandBounds[zone.key].width + ZOOM_PADDING * 2;
-		const fontUnits = isZoomed
-			? chipFontUnits(CHIP_FONT_UNITS, zoomedWidth)
-			: CHIP_FONT_UNITS;
+		const fontUnits = chipFontUnits(CHIP_FONT_UNITS, packWidth);
+		// Zoomed in far enough that the island fills the view, the cap rises with
+		// the room available rather than sitting at one fixed number.
+		const zoomFactor = 1100 / packWidth;
+		const cap = Math.round(Math.min(MAX_CHIPS_ZOOMED, MAX_CHIPS * zoomFactor * zoomFactor));
 
+		// Keep chips clear of the zone title (pinned top) and the "+N more" badge
+		// (pinned bottom). The title is hidden while zoomed, so it needs no band
+		// then; the badge band is always reserved because whether it appears is
+		// only known after packing.
 		const { chips, overflow } = packChips(
 			zone.key,
 			list,
 			area,
 			fontUnits,
-			isZoomed ? MAX_CHIPS_ZOOMED : MAX_CHIPS
+			cap,
+			// Measured in the browser, and re-measured after the heading was enlarged:
+			// the title renders ~14.2 viewBox units tall and the badge ~16.3.
+			{ top: isZoomed ? 0 : fontUnits * 1.35, bottom: fontUnits * 1.5 }
 		);
 
 		return { ...zone, channels: list, area, chips, overflow };
@@ -361,8 +380,16 @@
 				use:panzoom={{
 					get: () => $viewBoxTween,
 					set: (vb) => viewBoxTween.set(vb, { duration: 0 }),
-					bounds: { minWidth: 220, maxWidth: 2600 },
-					disabled: zoomedZoneKey !== null
+					// Stays enabled while an island is expanded: dragging moves around
+					// inside it and the wheel zooms further in, which is how the channels
+					// beyond the visible ones are reached.
+					bounds: { minWidth: 90, maxWidth: 1100 },
+					// The whole map is as far out as you can go, and panning stops at
+					// its edges rather than drifting into empty space.
+					world: { x: 0, y: 0, width: 1100, height: 800 },
+					// Named directly so the action re-runs on zoom and the grab cursor
+					// appears only once there is somewhere to pan.
+					view: $viewBoxTween
 				}}
 			>
 				<defs>
@@ -796,10 +823,16 @@
 		left: 0;
 		right: 0;
 		text-align: center;
-		color: rgba(255, 255, 255, 0.78);
-		font-size: clamp(0.58rem, 0.7vw, 0.72rem);
-		font-weight: 800;
-		letter-spacing: 0.05em;
+		/*
+			Phantom Sans only ships 400 and 700, so a heavier font-weight renders
+			identically to 700 — the heading reads as bold through full-white fill,
+			wider tracking and a dark shadow against the island, not through numbers.
+		*/
+		color: #fff;
+		font-size: clamp(0.72rem, 0.9vw, 0.92rem);
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
 		text-transform: uppercase;
 	}
 

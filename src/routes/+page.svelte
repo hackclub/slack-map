@@ -258,10 +258,22 @@
 	// a `$:` statement only tracks what it names directly, so reading `channels`
 	// inside here would leave the dependency invisible and the map would never
 	// update once the fetch resolves.
-	// No slice here any more — MAX_CHIPS caps what gets rendered, and the surplus
-	// is surfaced as a "+N more" count instead of being silently dropped.
+	/**
+	 * Channels for one island, ranked busiest-first.
+	 *
+	 * The cap in packChips keeps only the head of this list, so the ordering
+	 * decides which channels a viewer actually sees. Sorting here rather than
+	 * relying on the server's ordering keeps that guarantee local and explicit —
+	 * a change to the fetch order must not silently change what the map shows.
+	 * `id` breaks ties so the order is stable between SSR and the client.
+	 */
 	function getChannelsForZone(zoneKey: string, source: SlackChannel[] = channels) {
-		return source.filter((channel) => getZoneForChannel(channel).key === zoneKey);
+		return source
+			.filter((channel) => getZoneForChannel(channel).key === zoneKey)
+			.sort(
+				(a, b) =>
+					(b.num_members ?? 0) - (a.num_members ?? 0) || a.id.localeCompare(b.id)
+			);
 	}
 
 	function toggleZoom(zoneKey: string) {
@@ -407,14 +419,20 @@
 										class:selected-channel={selectedChannel?.id === chip.channel.id}
 										class="zone-channel"
 										style={`left:${spot.left}; top:${spot.top}; --tilt:${chip.tilt}deg;`}
-										title={`#${chip.channel.name}`}
+										title={chip.channel.num_members
+											? `#${chip.channel.name} · ${chip.channel.num_members.toLocaleString()} members`
+											: `#${chip.channel.name}`}
 										on:click={() => selectChannel(chip.channel)}
 									>
 										{chip.label}
 									</button>
 								{/each}
 								{#if zone.overflow > 0}
-									<span class="zone-overflow">+{zone.overflow.toLocaleString()} more</span>
+									<span class="zone-overflow">
+										+{zone.overflow.toLocaleString()} more{zoomedZoneKey === zone.key
+											? ''
+											: ' · zoom in'}
+									</span>
 								{/if}
 							{:else}
 								<p class="zone-placeholder">No channels yet</p>

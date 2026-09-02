@@ -20,7 +20,7 @@ export type PanZoomOptions = {
 	view?: ViewBox;
 	/** Disables interaction — used while an island is zoom-expanded. */
 	disabled?: boolean;
-};
+}; 
 
 /**
  * Svelte action giving the map a hand tool: drag to pan, wheel to zoom.
@@ -55,8 +55,15 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		return viewBox.width < world.width - 0.5 || viewBox.height < world.height - 0.5;
 	}
 
+	let cursorValue = '';
+
 	function applyCursor() {
-		node.style.cursor = !canPan() ? '' : dragging ? 'grabbing' : 'grab';
+		const next = !canPan() ? '' : dragging ? 'grabbing' : 'grab';
+		// `update` runs on every frame of the zoom tween, and writing the same
+		// value back still dirties style.
+		if (next === cursorValue) return;
+		cursorValue = next;
+		node.style.cursor = next;
 	}
 
 	/**

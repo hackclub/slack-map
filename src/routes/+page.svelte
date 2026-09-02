@@ -23,14 +23,37 @@
 	 * Chip font expressed in viewBox units rather than px. The SVG is stretched to
 	 * the container, so packing must reason in the same space the chips are
 	 * positioned in — mixing px into it would misjudge widths at other zoom levels.
+	 *
+	 * This is the packer's *model* of the font, not the size text renders at —
+	 * that is .zone-channel's font-size, and the two move independently. Measured
+	 * in the browser a chip's font is about 10.5 units on a 1440px-wide map; this
+	 * sits above that deliberately, because the ratio shifts with container width
+	 * and the packer must over-estimate rather than under-estimate. It had been
+	 * 14.5, a 39% over-estimate, which is what left the islands looking empty:
+	 * room was being reserved for chips half again bigger than the ones drawn.
+	 * Verified from 1000px to 1920px wide; at 11 chips start to overlap.
 	 */
-	const CHIP_FONT_UNITS = 13;
+	const CHIP_FONT_UNITS = 12;
 
 	/** Margin left around an island when zoomed into it. */
 	const ZOOM_PADDING = 15;
+	const ZOOM_MS = 700;
+
 
 	let customEmoji: Record<string, string> = {};
 
+	let packViewWidth = 1100;
+	let isAnimating = false;
+	let viewSeq = 0;
+
+	/**
+	 * Zone picked from the legend, which highlights that region and nothing more.
+	 *
+	 * Kept separate from `selectedChannel`: the legend used to open the modal for
+	 * whichever channel happened to sort first in the zone, which is not something
+	 * the reader asked for by clicking a category.
+	 */
+	let highlightedZoneKey: string | null = null;
 
 	let modalChannel: SlackChannelDetails | null = null;
 	let modalOpen = false;
@@ -112,7 +135,7 @@
 	const viewBoxTween = tweened(
 		{ x: 0, y: 0, width: 1100, height: 800 },
 		{
-			duration: 700,
+			duration: ZOOM_MS,
 			easing: cubicInOut
 		}
 	);
@@ -137,19 +160,30 @@
 		hardware: { x: 520, y: 555, width: 303, height: 237 }
 	};
 
-	// `viewBox` is a parameter rather than a `$viewBoxTween` read inside the body:
-	// Svelte compiles a template `{@const}` inside `$.untrack(...)`, so a store
-	// read in here would be invisible and the labels would stay frozen in their
-	// unzoomed spots while the map animated underneath them.
-	/** Project a viewBox-space rect onto the container as CSS percentages. */
-	function projectArea(area: LabelArea, viewBox: ViewBox) {
-		return {
-			left: `${((area.x - viewBox.x) / viewBox.width) * 100}%`,
-			top: `${((area.y - viewBox.y) / viewBox.height) * 100}%`,
-			width: `${(area.width / viewBox.width) * 100}%`,
-			height: `${(area.height / viewBox.height) * 100}%`
-		};
-	}
+	/** The map's own coordinate space, which the label layer is laid out in. */
+	const WORLD = { width: 1100, height: 800 };
+
+	/**
+	 * Each label box in world space, as percentages of the 1100x800 map.
+	 *
+	 * Constant on purpose: it does not read the tween at all. The layer above
+	 * moves instead. Re-projecting these against the live viewBox rewrote
+	 * left/top/width/height on five divs every frame, and those are layout
+	 * properties — every chip inside is absolutely placed with percentage offsets
+	 * and `width: max-content`, so all of them (up to 150 in an open island) were
+	 * re-measured, text included, on every frame of the zoom.
+	 */
+	const labelBoxes = Object.fromEntries(
+		Object.entries(labelAreas).map(([key, area]) => [
+			key,
+			{
+				left: `${(area.x / WORLD.width) * 100}%`,
+				top: `${(area.y / WORLD.height) * 100}%`,
+				width: `${(area.width / WORLD.width) * 100}%`,
+				height: `${(area.height / WORLD.height) * 100}%`
+			}
+		])
+	);
 
 	/**
 	 * Chips carry absolute viewBox coordinates from the packer, so they are
@@ -163,19 +197,61 @@
 		};
 	}
 
+	function setView(next: ViewBox, duration = ZOOM_MS) {
+		packViewWidth = next.width;
+
+		if (duration) {
+			isAnimating = true;
+			const seq = ++viewSeq;
+			// A tween that gets interrupted aborts without ever resolving its
+			// promise, so this is a timer rather than `.then` on the returned one.
+			window.setTimeout(() => {
+				if (seq === viewSeq) isAnimating = false;
+			}, duration);
+		} else {
+			isAnimating = false;
+		}
+
+		return viewBoxTween.set(next, { duration });
+	}
+
 	// Chip placement now lives in islandLayout.ts: the old jittered-grid scatter
 	// and its grid-searched constants only guaranteed spacing for <= 8 chips per
 	// island, which no longer holds now that islands grow with their channel count.
 
-	// Named here so the reactive statement actually tracks the tween; the template
-	// only reads the finished map, which keeps the labels glued to their islands
-	// through the whole zoom animation. Cheap by design: it re-projects five rects
-	// per frame while panning, and never re-packs chips.
-	$: labelBoxes = Object.fromEntries(
-		zoneEntries.map((zone) => [zone.key, projectArea(zone.area, $viewBoxTween)])
-	);
+	/**
+	 * World -> view as a single compositor-friendly transform on the label layer.
+	 *
+	 * The store is named directly so the statement actually tracks it — a read
+	 * inside a function body is invisible to Svelte, and the labels would sit
+	 * frozen in their unzoomed spots while the map animated underneath them.
+	 *
+	 * translate sits outside the scale, so its percentages resolve against the
+	 * layer's own container-sized box and land directly in view space. x and y
+	 * scale independently, matching preserveAspectRatio="none" on the SVG.
+	 *
+	 * --inv-* undoes that scale on each chip so chips keep their authored CSS
+	 * size while the layer grows. That is what makes zooming reveal more channels
+	 * rather than magnifying the ones already there.
+	 */
+	$: layerStyle = (() => {
+		const vb = $viewBoxTween;
+		const sx = WORLD.width / vb.width;
+		const sy = WORLD.height / vb.height;
+		return (
+			`transform:translate(${((-vb.x / vb.width) * 100).toFixed(4)}%,` +
+			`${((-vb.y / vb.height) * 100).toFixed(4)}%) ` +
+			`scale(${sx.toFixed(4)},${sy.toFixed(4)});` +
+			`--inv-x:${(1 / sx).toFixed(5)};--inv-y:${(1 / sy).toFixed(5)};`
+		);
+	})();
 
-	$: selectedZoneKey = selectedChannel ? getZoneForChannel(selectedChannel).key : null;
+	/**
+	 * The region currently drawn as highlighted: whichever the legend picked, or
+	 * failing that the zone the open channel belongs to.
+	 */
+	$: selectedZoneKey =
+		highlightedZoneKey ?? (selectedChannel ? getZoneForChannel(selectedChannel).key : null);
 	/**
 	 * Chips packed into each island's fixed text area.
 	 *
@@ -199,7 +275,7 @@
 	 */
 	const ZOOM_QUANTUM = 50;
 	$: packWidth =
-		Math.max(ZOOM_QUANTUM, Math.round($viewBoxTween.width / ZOOM_QUANTUM) * ZOOM_QUANTUM);
+		Math.max(ZOOM_QUANTUM, Math.round(packViewWidth / ZOOM_QUANTUM) * ZOOM_QUANTUM);
 
 	$: zoneEntries = zones.map((zone) => {
 		const list = getChannelsForZone(zone.key, channels);
@@ -212,22 +288,26 @@
 		const zoomFactor = 1100 / packWidth;
 		const cap = Math.round(Math.min(MAX_CHIPS_ZOOMED, MAX_CHIPS * zoomFactor * zoomFactor));
 
-		// Keep chips clear of the zone title (pinned top) and the "+N more" badge
-		// (pinned bottom). The title is hidden while zoomed, so it needs no band
-		// then; the badge band is always reserved because whether it appears is
-		// only known after packing.
-		const { chips, overflow } = packChips(
+		// Keep chips clear of the zone title, which is pinned to the top of the
+		// area. It is hidden while zoomed, so no band is needed then. The bottom
+		// band used to be for the "+N more" badge; with that gone it stays as edge
+		// padding, so the last row does not sit flush against the coastline.
+		const { chips } = packChips(
 			zone.key,
 			list,
 			area,
 			fontUnits,
 			cap,
-			// Measured in the browser, and re-measured after the heading was enlarged:
-			// the title renders ~14.2 viewBox units tall and the badge ~16.3.
-			{ top: isZoomed ? 0 : fontUnits * 1.35, bottom: fontUnits * 1.5 }
+			// Measured in the browser, and re-measured after the heading was
+			// enlarged: the title renders ~14.2 viewBox units tall.
+			// The title's own height does not scale with the chip font, so the
+			// multiplier drops as CHIP_FONT_UNITS rises. The bottom band was sized
+			// for the "+N more" badge; with that gone it only needs to keep the last
+			// chip off the coastline.
+			{ top: isZoomed ? 0 : fontUnits * 1.2, bottom: fontUnits * 0.4 }
 		);
 
-		return { ...zone, channels: list, area, chips, overflow };
+		return { ...zone, channels: list, area, chips };
 	});
 
 	onMount(() => {
@@ -253,6 +333,9 @@
 	}
 
 	async function selectChannel(channel: SlackChannel) {
+		// Opening a channel takes over the highlight, or the legend's pick would
+		// keep a different region lit than the one the channel lives in.
+		highlightedZoneKey = null;
 		selectedChannel = channel;
 		modalOpen = true;
 		modalLoading = true;
@@ -298,12 +381,12 @@
 	function toggleZoom(zoneKey: string) {
 		if (zoomedZoneKey === zoneKey) {
 			zoomedZoneKey = null;
-			viewBoxTween.set({ x: 0, y: 0, width: 1100, height: 800 });
+			setView({ x: 0, y: 0, width: 1100, height: 800 });
 		} else {
 			zoomedZoneKey = zoneKey;
 			const bounds = islandBounds[zoneKey];
 			if (bounds) {
-				viewBoxTween.set({
+				setView({
 					x: bounds.minX - ZOOM_PADDING,
 					y: bounds.minY - ZOOM_PADDING,
 					width: bounds.width + ZOOM_PADDING * 2,
@@ -379,7 +462,7 @@
 				aria-hidden="true"
 				use:panzoom={{
 					get: () => $viewBoxTween,
-					set: (vb) => viewBoxTween.set(vb, { duration: 0 }),
+					set: (vb) => setView(vb, 0),
 					// Stays enabled while an island is expanded: dragging moves around
 					// inside it and the wheel zooms further in, which is how the channels
 					// beyond the visible ones are reached.
@@ -407,7 +490,7 @@
 				</defs>
 				{#each zoneEntries as zone}
 					<g
-						filter="url(#island-shadow)"
+						filter={isAnimating ? undefined : 'url(#island-shadow)'}
 						class:zoomable={!zoomedZoneKey}
 						on:click={() => toggleZoom(zone.key)}
 						role="button"
@@ -428,7 +511,12 @@
 				{/each}
 			</svg>
 
-			<div class="zone-labels" class:zoomed={zoomedZoneKey !== null}>
+			<div
+				class="zone-labels"
+				class:zoomed={zoomedZoneKey !== null}
+				class:animating={isAnimating}
+				style={layerStyle}
+			>
 				{#each zoneEntries as zone}
 					{@const labelPos = labelBoxes[zone.key]}
 					<div
@@ -454,13 +542,6 @@
 										{chip.label}
 									</button>
 								{/each}
-								{#if zone.overflow > 0}
-									<span class="zone-overflow">
-										+{zone.overflow.toLocaleString()} more{zoomedZoneKey === zone.key
-											? ''
-											: ' · zoom in'}
-									</span>
-								{/if}
 							{:else}
 								<p class="zone-placeholder">No channels yet</p>
 							{/if}
@@ -491,9 +572,11 @@
 						<button
 							class:active={selectedZoneKey === zone.key}
 							class="legend-item"
+							aria-pressed={highlightedZoneKey === zone.key}
 							on:click={() => {
-								const channel = getChannelsForZone(zone.key)[0];
-								if (channel) void selectChannel(channel);
+								// Pressing the lit one again clears it, so the legend is a
+								// toggle rather than a one-way trip.
+								highlightedZoneKey = highlightedZoneKey === zone.key ? null : zone.key;
 							}}
 						>
 							<span
@@ -720,13 +803,29 @@
 		z-index: 2;
 		pointer-events: none;
 		transition: opacity 0.4s ease;
+		/*
+			The whole layer moves as one transform, so nothing inside it re-lays-out
+			while the map zooms or pans — see layerStyle.
+		*/
+		transform-origin: 0 0;
+		will-change: transform;
 	}
 
 	/*
-		Sized to its island's region by getLabelPosition. Chips are absolutely
-		placed inside it by the packer in islandLayout.ts, so this is just their
-		block — a fixed-anchor column used to overflow the coastline once a zone
-		held more than a few channels.
+		The chips' --inv-* scale changes on every frame of a zoom, and a transition
+		on transform would restart a 200ms interpolation on each of those frames.
+		Hover keeps its transition: nothing else is moving then.
+	*/
+	.zone-labels.animating .zone-channel,
+	.zone-labels.animating .zone-label {
+		transition: none;
+	}
+
+	/*
+		Sized to its island's region in world space by labelBoxes. Chips are
+		absolutely placed inside it by the packer in islandLayout.ts, so this is
+		just their block — a fixed-anchor column used to overflow the coastline
+		once a zone held more than a few channels.
 	*/
 	.zone-label {
 		position: absolute;
@@ -738,6 +837,9 @@
 		pointer-events: none;
 		opacity: 1;
 		transition: opacity 0.3s ease;
+		/* Fixed size in world space, so its subtree can never dirty layout
+		   outside it. */
+		contain: layout style;
 	}
 
 	.zone-labels.zoomed .zone-label {
@@ -848,14 +950,34 @@
 		position: absolute;
 		/* re-enabled on top of the label's pointer-events: none */
 		pointer-events: auto;
-		transform: translate(-50%, -50%) rotate(var(--tilt, 0deg));
+		/* The inverse scale cancels the layer's, keeping the chip at its authored
+		   size. It goes before the rotate so the tilt applies to an already
+		   un-stretched box. */
+		transform: translate(-50%, -50%) scale(var(--inv-x, 1), var(--inv-y, 1))
+			rotate(var(--tilt, 0deg));
+		/*
+			Kept on permanently, which is normally bad practice — but --inv-* changes
+			on every frame of a zoom, and without promotion that repaints all ~56
+			chips each time. Measured over the open animation: p95 frame 41.6ms
+			without it, 13.9ms with. Promoting only while animating was measurably
+			worse (27.9ms): the layers get built after the tween has already begun.
+			Bounded by MAX_CHIPS_ZOOMED, so this is at most 150 small layers.
+		*/
+		will-change: transform;
 		width: max-content;
-		max-width: 100%;
+		/*
+			Was max-width: 100%. That clamp resolves against the label box's *world*
+			size, which no longer grows with the zoom, so it would truncate chips
+			that visually fit fine. fitLabel in islandLayout.ts is what keeps names
+			inside the coastline anyway.
+		*/
+		max-width: none;
 		border: 0;
 		padding: 0.28rem 0.6rem;
 		background: rgba(255, 255, 255, 0.08);
 		color: #fff;
-		font-size: clamp(0.66rem, 0.85vw, 0.86rem);
+		/* Raising this means raising CHIP_FONT_UNITS by the same ratio. */
+		font-size: clamp(0.72rem, 0.95vw, 0.95rem);
 		font-weight: 800;
 		line-height: 1.15;
 		white-space: nowrap;
@@ -870,8 +992,10 @@
 
 	.zone-channel:hover {
 		background: rgba(255, 255, 255, 0.15);
-		/* keep the tilt, or the chip would snap upright on hover */
-		transform: translate(-50%, -50%) rotate(var(--tilt, 0deg)) scale(1.09);
+		/* keep the tilt and the inverse scale, or the chip would snap upright and
+		   jump to layer scale on hover */
+		transform: translate(-50%, -50%) scale(var(--inv-x, 1), var(--inv-y, 1))
+			rotate(var(--tilt, 0deg)) scale(1.09);
 		z-index: 2;
 	}
 
@@ -879,22 +1003,6 @@
 		text-decoration: underline;
 		text-decoration-thickness: 0.18rem;
 		text-underline-offset: 0.2rem;
-	}
-
-	/* Sits bottom-centre of the island: the channels the cap could not fit. */
-	.zone-overflow {
-		position: absolute;
-		left: 50%;
-		bottom: 0;
-		transform: translateX(-50%);
-		padding: 0.2rem 0.55rem;
-		border-radius: 999px;
-		background: rgba(0, 0, 0, 0.28);
-		color: rgba(255, 255, 255, 0.72);
-		font-size: 0.66rem;
-		font-weight: 800;
-		white-space: nowrap;
-		pointer-events: none;
 	}
 
 	.zone-placeholder {

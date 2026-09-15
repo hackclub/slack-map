@@ -224,6 +224,12 @@
 		};
 	}
 
+	/** An island's bounding box as a rect, in world units. */
+	function islandRect(zoneKey: string) {
+		const bounds = islandBounds[zoneKey];
+		return { x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height };
+	}
+
 	/** The view that frames one island when it is opened. */
 	function islandView(zoneKey: string): ViewBox {
 		const bounds = islandBounds[zoneKey];
@@ -319,8 +325,8 @@
 	$: zoomedZone = zoneEntries.find((zone) => zone.key === zoomedZoneKey) ?? null;
 
 	/**
-	 * The opened island's whole zone, laid out as pages that spiral out from the
-	 * one it opens on. See islandTiles.ts.
+	 * The opened island's whole zone, spread evenly over an area larger than its
+	 * window that can be dragged in every direction. See islandTiles.ts.
 	 *
 	 * Chips render at a fixed CSS size, so in the opened view each covers fewer
 	 * viewBox units; the font is scaled to that view's width, which is what fits
@@ -330,27 +336,12 @@
 		? createTileField(
 				zoomedZone.key,
 				zoomedZone.channels,
-				zoomedZone.area,
-				chipFontUnits(CHIP_FONT_UNITS, islandView(zoomedZone.key).width),
-				pageAspect(zoomedZone.key)
+				// The island's full bounding box, not its label box: chips are clipped
+				// to the coastline now, so the window they fill is the whole island.
+				islandRect(zoomedZone.key),
+				chipFontUnits(CHIP_FONT_UNITS, islandView(zoomedZone.key).width)
 			)
 		: null;
-
-	let terrainEl: SVGSVGElement | null = null;
-
-	/**
-	 * One page's width over its height as it appears on screen once the island is
-	 * open. The SVG stretches x and y independently, so a page that is nearly
-	 * square in viewBox units can be twice as wide as it is tall on a wide monitor
-	 * — and the area of pages is meant to come out square on screen, not in units.
-	 */
-	function pageAspect(zoneKey: string) {
-		const area = labelAreas[zoneKey];
-		const view = islandView(zoneKey);
-		const rect = terrainEl?.getBoundingClientRect();
-		if (!rect?.width || !rect.height) return area.width / area.height;
-		return ((area.width / view.width) * rect.width) / ((area.height / view.height) * rect.height);
-	}
 
 	/**
 	 * Which pages are near the window. A string, so the statement below re-runs
@@ -564,6 +555,20 @@
 							d="M0,0.2 C0.14,0.06 0.3,0.02 0.45,0.07 C0.62,0.13 0.8,0.03 1,0 L1,1 L0,1 Z"
 						/>
 					</clipPath>
+					<!--
+						Each island's own coastline, re-expressed in its label box's
+						objectBoundingBox units, so an opened island's chips are clipped to the
+						shore itself rather than to the rectangle inside it.
+					-->
+					{#each zones as zone}
+						{@const area = labelAreas[zone.key]}
+						<clipPath id={`coast-${zone.key}`} clipPathUnits="objectBoundingBox">
+							<path
+								d={zone.path}
+								transform={`scale(${1 / area.width} ${1 / area.height}) translate(${-area.x} ${-area.y})`}
+							/>
+						</clipPath>
+					{/each}
 				</defs>
 			</svg>
 
@@ -579,7 +584,6 @@
 
 			<svg
 				class="terrain"
-				bind:this={terrainEl}
 				class:zoomed={zoomedZoneKey !== null}
 				viewBox={svgViewBox}
 				preserveAspectRatio="none"
@@ -650,7 +654,8 @@
 						class:selected={selectedZoneKey === zone.key}
 						class:zoom-expanded={zoomedZoneKey === zone.key}
 						class="zone-label"
-						style={`left:${labelPos.left}; top:${labelPos.top}; width:${labelPos.width}; height:${labelPos.height};`}
+						style={`left:${labelPos.left}; top:${labelPos.top}; width:${labelPos.width}; height:${labelPos.height};` +
+							(zoomedZoneKey === zone.key ? `clip-path:url(#coast-${zone.key});` : '')}
 					>
 						<p class="zone-title">{zone.label}</p>
 						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
@@ -922,6 +927,20 @@
 		cursor: pointer;
 	}
 
+	/*
+		Islands are focusable for keyboard users, but the browser's focus ring is
+		drawn around the group's bounding box — with an island open that is a white
+		rectangle around the whole screen after every click or drag. Keyboard focus
+		lights the coastline instead.
+	*/
+	.terrain g {
+		outline: none;
+	}
+
+	.terrain g:focus-visible path {
+		stroke: #fff;
+	}
+
 	.terrain g.zoomable:hover path {
 		filter: brightness(1.15);
 		transition: filter 0.2s ease;
@@ -986,13 +1005,12 @@
 	}
 
 	/*
-		The window onto that layer. Clipping is to the label box — the largest
-		rectangle inscribed in the coastline — so chips being dragged past the edge
-		disappear just inside the shore rather than crossing it.
+		The window onto that layer is the island itself: the label box is clipped to
+		its coastline (the coast-* clip paths), so chips fill the whole island and
+		disappear exactly at the shore. It used to be overflow: hidden, which cut
+		chips off along the straight edges of the rectangle inscribed in the island —
+		mid-island, and plainly visible once the contents could be dragged sideways.
 	*/
-	.zone-label.zoom-expanded {
-		overflow: hidden;
-	}
 
 	/*
 		Sized to its island's region in world space by labelBoxes. Chips are
@@ -1134,7 +1152,7 @@
 			chips each time. Measured over the open animation: p95 frame 41.6ms
 			without it, 13.9ms with. Promoting only while animating was measurably
 			worse (27.9ms): the layers get built after the tween has already begun.
-			An opened island only draws the pages near its window (islandTiles.ts),
+			An opened island only draws the cells under its window (islandTiles.ts),
 			so the layer count stays bounded however large the zone is.
 		*/
 		will-change: transform;

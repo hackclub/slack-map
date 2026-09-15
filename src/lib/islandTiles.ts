@@ -12,16 +12,14 @@ import {
 /**
  * An opened island's contents as one bounded area, evenly filled.
  *
- * The area is a grid of pages, each one copy of the island's label box, sized to
- * hold the whole zone and kept roughly square on screen. The island opens on the
- * centre page, so there is room to drag in every direction until an edge.
+ * The area is the island's window scaled up by the same factor in both
+ * directions and centred on where the island opens, so there is always as much
+ * room to drag sideways as up and down. It is sized to the zone and split into
+ * equal cells that each get the same share of channels, so the density is even
+ * everywhere. The busiest channels go to the cells nearest the middle, where you
+ * land.
  *
- * Every page gets about the same number of channels, so the density is even
- * across the whole area instead of full in the middle and thinning out towards
- * the edges. Pages are handed channels in spiral order out from the centre, so
- * the busiest channels are still where you land.
- *
- * Only pages overlapping the window are ever packed, and each is packed once, so
+ * Only cells overlapping the window are ever packed, and each is packed once, so
  * a zone of thousands of channels costs no more to drag through than one of fifty.
  */
 
@@ -30,179 +28,186 @@ export type TileField = {
 	min: Offset;
 	max: Offset;
 	/**
-	 * Which pages overlap the window at `offset`, as a string key.
+	 * Which cells overlap the window at `offset`, as a string key.
 	 *
-	 * A primitive on purpose: it only changes when a page boundary is crossed, so
+	 * A primitive on purpose: it only changes when a cell boundary is crossed, so
 	 * a reactive statement keyed on it re-runs a handful of times per drag rather
 	 * than on every pointermove.
 	 */
 	visibleKey: (offset: Offset) => string;
-	/** The chips for a key from `visibleKey`, packing any page not yet seen. */
+	/** The chips for a key from `visibleKey`, packing any cell not yet seen. */
 	chipsFor: (key: string) => PlacedChip[];
 };
 
 /**
- * How much of a page past the window's edge counts as visible, as a fraction of
- * the page.
+ * Share of a window's capacity the area is filled to.
  *
- * Zero on purpose. Every chip sits inside its own page's margins, so a page
- * that isn't overlapping the window has nothing that could show — and it gets
- * drawn the moment its first sliver slides in, while that edge is still clipped
- * by the label box. Any lookahead at all pulls in all eight neighbours of the
- * page an island opens on, right in the frame the open animation starts.
- */
-const LOOKAHEAD = 0;
-
-/**
- * Share of a page's capacity each page is filled to.
- *
- * Filling pages to capacity front-loads the channels and leaves the last page
- * with whatever is left over — often a handful of chips on an otherwise empty
- * page at the edge. Sizing the area for a little under capacity gives every page
- * the same share, with room to absorb pages whose long names fit fewer chips.
+ * Filling to capacity front-loads the channels and leaves the last cells with
+ * whatever is left over. Sizing the area for a little under capacity gives every
+ * cell the same share, with room to absorb cells whose long names fit fewer chips.
  */
 const FILL = 0.75;
 
-/** Page position -> order in a square spiral out from (0, 0). */
-function spiralIndex(tx: number, ty: number): number {
-	const r = Math.max(Math.abs(tx), Math.abs(ty));
-	if (r === 0) return 0;
+/**
+ * The smallest the area gets, as a multiple of the window on each side.
+ *
+ * A zone that fits in its window would otherwise get an area exactly that size,
+ * with nowhere to drag at all — and after a full crawl that is most zones. At 2
+ * there is half a window of travel each way on both axes, which reads as moving
+ * around; 1.5 gave a quarter, which felt stuck.
+ */
+const MIN_SPAN = 2;
 
-	// Ring r holds indices (2r-1)^2 .. (2r+1)^2 - 1: 8r pages, 2r to a side.
-	const base = (2 * r - 1) ** 2;
-	if (tx === r && ty > -r) return base + (ty + r - 1);
-	if (ty === r) return base + 2 * r + (r - 1 - tx);
-	if (tx === -r) return base + 4 * r + (r - 1 - ty);
-	return base + 6 * r + (tx + r - 1);
-}
+/** How much the area grows each time the channels don't all fit. */
+const GROW = 1.08;
 
-type Cell = { tx: number; ty: number };
+type Cell = Rect & { col: number; row: number };
 
 export function createTileField(
 	zoneKey: string,
 	channels: SlackChannel[],
 	area: Rect,
-	fontUnits: number,
-	/**
-	 * A page's on-screen width over its height. The SVG stretches x and y
-	 * independently, so this can't be read off `area`; it is what keeps the whole
-	 * area square on screen rather than square in viewBox units.
-	 */
-	pageAspect = area.width / area.height
+	fontUnits: number
 ): TileField {
-	// Half-font margins inside every page, so chips on either side of a page edge
+	// Half-font margins inside every cell, so chips on either side of a cell edge
 	// still end up at least a full gap apart.
 	const margin = fontUnits * 0.5;
 	const reserve: Reserve = { top: margin, bottom: margin };
+	const inset = (rect: Rect): Rect => ({
+		x: rect.x + margin,
+		y: rect.y,
+		width: rect.width - margin * 2,
+		height: rect.height
+	});
 
-	function pageRect({ tx, ty }: Cell): Rect {
-		return {
-			x: area.x + tx * area.width + margin,
-			y: area.y + ty * area.height,
-			width: area.width - margin * 2,
-			height: area.height
-		};
-	}
-
-	// Each page gets its own seed, or every page would share one scatter pattern
+	// Each cell gets its own seed, or every cell would share one scatter pattern
 	// and the area would visibly repeat. Planning and packing must use the same
 	// key: tilt comes from it, and tilt changes how many chips fit.
-	const seedFor = (index: number) => `${zoneKey}:page:${index}`;
-	const size = pageRect({ tx: 0, ty: 0 });
+	const seedFor = (index: number) => `${zoneKey}:cell:${index}`;
 	const total = channels.length;
 
 	/**
-	 * Hands every page of a cols x rows grid an equal share of what is left, in
-	 * spiral order from the centre. Returns null if the channels don't all fit,
-	 * which only happens when many pages hold fewer than their share.
+	 * Lays out an area `span` windows wide and `span` windows tall, and hands every
+	 * cell an equal share of the channels, middle cells first. Returns null if they
+	 * don't all fit, which only happens when many cells hold less than their share.
 	 */
-	function distribute(cols: number, rows: number) {
-		// Centred on page (0, 0), where the island opens.
-		const txMin = -Math.floor((cols - 1) / 2);
-		const tyMin = -Math.floor((rows - 1) / 2);
+	function layout(span: number) {
+		// Whole cells no bigger than the window and never under half of it, so no
+		// cell is a sliver that would cut long names short.
+		const count = Math.max(1, Math.ceil(span - 1e-6));
+		const width = span * area.width;
+		const height = span * area.height;
+		const x0 = area.x - (width - area.width) / 2;
+		const y0 = area.y - (height - area.height) / 2;
+		const cellWidth = width / count;
+		const cellHeight = height / count;
 
 		const cells: Cell[] = [];
-		for (let ty = tyMin; ty < tyMin + rows; ty++) {
-			for (let tx = txMin; tx < txMin + cols; tx++) cells.push({ tx, ty });
+		for (let row = 0; row < count; row++) {
+			for (let col = 0; col < count; col++) {
+				cells.push({
+					col,
+					row,
+					x: x0 + col * cellWidth,
+					y: y0 + row * cellHeight,
+					width: cellWidth,
+					height: cellHeight
+				});
+			}
 		}
-		cells.sort((a, b) => spiralIndex(a.tx, a.ty) - spiralIndex(b.tx, b.ty));
 
-		// starts[i] is the first channel on page i; the last entry is where they ran out.
+		// Nearest the middle first, measured in windows so a wide window doesn't
+		// favour the cells above and below it over those beside it.
+		const distance = (cell: Cell) =>
+			((cell.x + cell.width / 2 - (x0 + width / 2)) / area.width) ** 2 +
+			((cell.y + cell.height / 2 - (y0 + height / 2)) / area.height) ** 2;
+		cells.sort((a, b) => distance(a) - distance(b) || a.row - b.row || a.col - b.col);
+
+		// starts[i] is the first channel in cell i; the last entry is where they ran out.
 		const starts = [0];
 		for (let i = 0; i < cells.length; i++) {
 			const start = starts[i];
 			const share = Math.ceil((total - start) / (cells.length - i));
-			// fitRows keeps whole rows, so a page can take slightly less than its share.
+			// fitRows keeps whole rows, so a cell can take slightly less than its share.
 			const fits = share
-				? countFitting(seedFor(i), channels.slice(start, start + share), size, fontUnits, reserve)
+				? countFitting(
+						seedFor(i),
+						channels.slice(start, start + share),
+						inset(cells[i]),
+						fontUnits,
+						reserve
+					)
 				: 0;
 			starts.push(start + fits);
 		}
 
 		if (starts[cells.length] < total) return null;
-		return { cells, starts, txMin, tyMin, cols, rows };
+		return { cells, starts, count, width, height, x0, y0, cellWidth, cellHeight };
 	}
 
-	// What one page holds, measured against a full page's worth of the zone's own
-	// names — cycled if the zone is small. Measuring the zone as-is capped the
-	// estimate at its channel count, so a seven-channel zone looked like a page
-	// only holds seven and was spread thinly over two pages.
+	// What one window holds, measured against a window's worth of the zone's own
+	// names — cycled if the zone is small, or a seven-channel zone would look like
+	// a window only holds seven.
 	const sample = total
 		? Array.from({ length: MAX_CHIPS_ZOOMED }, (_, i) => channels[i % total])
 		: [];
-	const capacity = Math.max(1, countFitting(seedFor(0), sample, size, fontUnits, reserve));
+	const capacity = Math.max(1, countFitting(seedFor(0), sample, inset(area), fontUnits, reserve));
 
-	// Odd counts, so the page the island opens on is the true centre with as much
-	// room to drag one way as the other. With two columns it sat against the left
-	// edge and could only be dragged right.
-	const odd = (count: number) => (count > 1 && count % 2 === 0 ? count + 1 : count);
-
-	const wanted = Math.max(1, Math.ceil(total / (capacity * FILL)));
-	let cols = odd(Math.max(1, Math.round(Math.sqrt(wanted / pageAspect))));
-	let rows = odd(Math.max(1, Math.ceil(wanted / cols)));
-
-	// Grow two at a time on whichever axis keeps the area squarer on screen, until
-	// the whole zone fits. Every page always fits at least one row, so this ends.
-	let plan = distribute(cols, rows);
+	// The zone needs total / (capacity * FILL) windows of area. The square root of
+	// that on both sides keeps the area the window's own shape, only bigger —
+	// which is what gives sideways travel as well as vertical. Sizing it square on
+	// screen instead turned every mid-sized zone into a single column of pages on
+	// a wide monitor, and those could only be moved up and down.
+	let span = total > 1 ? Math.max(MIN_SPAN, Math.sqrt(total / (capacity * FILL))) : 1;
+	let plan = layout(span);
+	// Every cell always fits at least one row, so growing eventually fits them all.
 	while (!plan) {
-		if (cols * pageAspect <= rows) cols += 2;
-		else rows += 2;
-		plan = distribute(cols, rows);
+		span *= GROW;
+		plan = layout(span);
 	}
 
-	const { cells, starts, txMin, tyMin } = plan;
-	const indexAt = new Map(cells.map((cell, i) => [`${cell.tx},${cell.ty}`, i]));
+	const { cells, starts, count, width, height, x0, y0, cellWidth, cellHeight } = plan;
+	const indexAt = new Map(cells.map((cell, i) => [cell.row * count + cell.col, i]));
 	const cache = new Map<number, PlacedChip[]>();
 
-	function page(index: number) {
+	function cellChips(index: number) {
 		let chips = cache.get(index);
 		if (!chips) {
 			const slice = channels.slice(starts[index], starts[index + 1]);
-			chips = packChips(seedFor(index), slice, pageRect(cells[index]), fontUnits, slice.length, reserve)
+			chips = packChips(seedFor(index), slice, inset(cells[index]), fontUnits, slice.length, reserve)
 				.chips;
 			cache.set(index, chips);
 		}
 		return chips;
 	}
 
-	const txMax = txMin + plan.cols - 1;
-	const tyMax = tyMin + plan.rows - 1;
+	// How far the window can travel from the centre before it reaches an edge.
+	const travelX = (width - area.width) / 2;
+	const travelY = (height - area.height) / 2;
 
 	return {
-		// Dragging right moves the content right, which brings the pages to the
-		// LEFT into view — hence the sign flip between page extent and offset.
-		min: { x: -txMax * area.width, y: -tyMax * area.height },
-		max: { x: -txMin * area.width, y: -tyMin * area.height },
+		// Dragging right moves the content right, bringing what lies left of the
+		// window into view.
+		min: { x: -travelX, y: -travelY },
+		max: { x: travelX, y: travelY },
 
 		visibleKey(offset) {
-			// The window, in page units: page (0, 0) sits at 0..1 when nothing is dragged.
-			const u = -offset.x / area.width;
-			const v = -offset.y / area.height;
-			const indices: number[] = [];
+			// The window, in content coordinates.
+			const left = area.x - offset.x;
+			const top = area.y - offset.y;
 
-			for (let ty = Math.floor(v - LOOKAHEAD); ty < v + 1 + LOOKAHEAD; ty++) {
-				for (let tx = Math.floor(u - LOOKAHEAD); tx < u + 1 + LOOKAHEAD; tx++) {
-					const index = indexAt.get(`${tx},${ty}`);
+			// Every chip sits inside its own cell's margins, so only cells actually
+			// overlapping the window can show anything. Pulling in neighbours as well
+			// would draw up to nine cells in the frame the open animation starts.
+			const colFrom = Math.max(0, Math.floor((left - x0) / cellWidth));
+			const colTo = Math.min(count - 1, Math.ceil((left + area.width - x0) / cellWidth) - 1);
+			const rowFrom = Math.max(0, Math.floor((top - y0) / cellHeight));
+			const rowTo = Math.min(count - 1, Math.ceil((top + area.height - y0) / cellHeight) - 1);
+
+			const indices: number[] = [];
+			for (let row = rowFrom; row <= rowTo; row++) {
+				for (let col = colFrom; col <= colTo; col++) {
+					const index = indexAt.get(row * count + col);
 					if (index !== undefined) indices.push(index);
 				}
 			}
@@ -212,7 +217,7 @@ export function createTileField(
 
 		chipsFor(key) {
 			if (!key) return [];
-			return key.split(',').flatMap((index) => page(Number(index)));
+			return key.split(',').flatMap((index) => cellChips(Number(index)));
 		}
 	};
 }

@@ -33,12 +33,12 @@ export type PlacedChip = {
  * centroids destroyed the 15px coastline separation the layout was verified
  * against — every island pair overlapped and chips from different islands
  * collided on screen. Extra channels are revealed by opening an island instead,
- * where its contents can be dragged through page by page (islandTiles.ts).
+ * where its contents can be dragged through in every direction (islandTiles.ts).
  */
 export const MAX_CHIPS = 24;
 
 /**
- * Most channels offered to one page of an opened island (see islandTiles.ts).
+ * Most channels offered to one cell of an opened island (see islandTiles.ts).
  *
  * Not a visible limit: a page holds far fewer than this, and whatever doesn't
  * fit simply starts the next page. It only bounds how much row fitting is done
@@ -518,7 +518,7 @@ function innerArea(fullArea: Rect, reserve: Reserve, fontUnits: number): Rect {
  *
  * Shared by packChips and countFitting so the two can never disagree about how
  * many channels an area holds. That agreement is what lets islandTiles.ts hand
- * each page exactly the channels it will place, so none fall between pages.
+ * each cell exactly the channels it will place, so none fall between cells.
  */
 function fitRows(
 	zoneKey: string,

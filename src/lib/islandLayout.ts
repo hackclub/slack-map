@@ -37,11 +37,51 @@ export type PlacedChip = {
  */
 export const MAX_CHIPS = 24;
 
-/** Zooming into one island gives it the whole viewport, so far more fits. */
-export const MAX_CHIPS_ZOOMED = 150;
+/**
+ * Zooming into one island gives it the whole viewport, so far more fits.
+ *
+ * Raised from 150 once the padding and gaps started scaling with the zoom:
+ * geometry alone then fitted more than 150 into an opened island, so the old
+ * ceiling silently became the limiter instead of the space.
+ */
+export const MAX_CHIPS_ZOOMED = 400;
 
-const GAP_X = 10;
-const GAP_Y = 8;
+/**
+ * Chip padding and inter-chip gaps, as multiples of the chip font.
+ *
+ * These used to be absolute viewBox units (19.2, 9, 10, 8). `fontUnits` shrinks
+ * as you zoom in — chipFontUnits scales it — but those constants did not, so an
+ * opened island modelled its chips at twice their drawn height with gaps wider
+ * than the chips themselves, which is what left a zoomed island looking sparse.
+ *
+ * The ratios reproduce the old absolute values exactly at CHIP_FONT_UNITS = 12,
+ * so the full map is unchanged; only zoomed levels get denser.
+ */
+const PAD_X_RATIO = 1.6; // was 19.2 absolute
+const PAD_Y_RATIO = 0.75; // was 9
+const GAP_X_RATIO = 10 / 12;
+const GAP_Y_RATIO = 8 / 12;
+
+/**
+ * Total spread of the cosmetic chip tilt, in degrees (so +/- half of this).
+ *
+ * The packer works in axis-aligned boxes, but a tilted chip sweeps a taller box
+ * than its own height: `h * cos + w * sin`. Chips are wide, so at 3.5 degrees a
+ * long name reaches about 6% of its width above and below its unrotated edge.
+ * At full-map spacing there was enough slack to absorb that; packed tight in a
+ * zoomed island there is not, and chips genuinely clipped each other. The
+ * allowance below is folded into every chip's measured height so the packer
+ * reserves the room the tilt actually uses.
+ */
+const TILT_RANGE_DEG = 7;
+const TILT_SIN = Math.sin(((TILT_RANGE_DEG / 2) * Math.PI) / 180);
+
+/** Gaps for one zoom level, threaded through so nothing reads a stale constant. */
+type Spacing = { x: number; y: number };
+
+function spacingFor(fontUnits: number): Spacing {
+	return { x: fontUnits * GAP_X_RATIO, y: fontUnits * GAP_Y_RATIO };
+}
 
 /**
  * Share of the leftover vertical space given to per-row bands rather than to
@@ -54,13 +94,18 @@ const BAND_SHARE = 0.55;
  * Share of an island's height held back from row packing so the chips have
  * somewhere to scatter into.
  *
- * This is the one genuine trade in the layout. A packed island has almost no
- * vertical slack — community fitted seven rows into 263 units, leaving about 47
- * to share between them — and with that little room every chip is boxed in by
- * its neighbours, so no amount of jittering moves anything. Buying scatter means
- * giving up roughly one row per island.
+ * A packed island has almost no vertical slack of its own — community fitted
+ * seven rows into 263 units, leaving about 47 to share between them — and with
+ * that little room every chip is boxed in by its neighbours, so no amount of
+ * jittering moves anything. Holding some back is what buys the scatter, and it
+ * costs channels: each step up drops roughly one row per island.
+ *
+ * It used to be 0.22, back when a random jitter was the only thing spreading
+ * chips out and it needed the elbow room. spreadEvenly redistributes far better
+ * for the same space, so most of that reserve could go back to showing
+ * channels — 47 chips to 52 — without the layout clumping again.
  */
-const SCATTER_SHARE = 0.22;
+const SCATTER_SHARE = 0.1;
 
 /**
  * Split `total` into `parts` non-negative pieces of random size.
@@ -93,20 +138,104 @@ function clampTo(value: number, min: number, max: number) {
 	return min > max ? (min + max) / 2 : Math.min(Math.max(value, min), max);
 }
 
-/** Would a chip at (x, y) come within the gaps of any chip other than `skip`? */
-function hits(chips: PlacedChip[], skip: number, x: number, y: number, w: number, h: number) {
-	for (let j = 0; j < chips.length; j++) {
-		if (j === skip) continue;
-		const other = chips[j];
-		if (
-			Math.abs(x - other.x) < (w + other.w) / 2 + GAP_X &&
-			Math.abs(y - other.y) < (h + other.h) / 2 + GAP_Y
-		) {
-			return true;
-		}
-	}
-	return false;
+/** Would a chip at (x, y) come within the gaps of `other`? */
+function overlaps(
+	other: PlacedChip,
+	x: number,
+	y: number,
+	w: number,
+	h: number,
+	spacing: Spacing
+) {
+	return (
+		Math.abs(x - other.x) < (w + other.w) / 2 + spacing.x &&
+		Math.abs(y - other.y) < (h + other.h) / 2 + spacing.y
+	);
 }
+
+type Grid = {
+	/** Would a chip at (x, y) touch anything other than the one at `skip`? */
+	hits: (skip: number, x: number, y: number, w: number, h: number) => boolean;
+	/** Re-file a chip after it has been moved. */
+	move: (index: number, x: number, y: number) => void;
+};
+
+/**
+ * Uniform grid over the packed chips, so a collision query looks at a handful of
+ * neighbours instead of every other chip.
+ *
+ * The check used to be a linear scan. That is fine for the couple of dozen chips
+ * a closed island shows, but it runs inside two relaxation loops — so the work
+ * is quadratic in the chip count, and it all lands in the frame where the island
+ * opens. An open island now packs its whole zone, which for community is several
+ * hundred channels.
+ *
+ * Cells are sized to the widest chip plus its gap. A query's reach is at most
+ * `(w + maxW) / 2 + gap`, which cannot exceed one cell, so every possible
+ * collider lies in the 3x3 block around the query and anything further away is
+ * provably out of range.
+ */
+function buildGrid(chips: PlacedChip[], area: Rect, spacing: Spacing): Grid {
+	let maxW = 0;
+	let maxH = 0;
+	for (const chip of chips) {
+		if (chip.w > maxW) maxW = chip.w;
+		if (chip.h > maxH) maxH = chip.h;
+	}
+
+	const cellW = Math.max(1, maxW + spacing.x);
+	const cellH = Math.max(1, maxH + spacing.y);
+	// A cell of margin each side, so a chip sitting exactly on the boundary still
+	// files into a real cell rather than being clamped into its neighbour's.
+	const originX = area.x - cellW;
+	const originY = area.y - cellH;
+	const cols = Math.ceil(area.width / cellW) + 3;
+	const rows = Math.ceil(area.height / cellH) + 3;
+
+	const cells: number[][] = Array.from({ length: cols * rows }, () => []);
+	const colOf = (x: number) =>
+		Math.min(cols - 1, Math.max(0, Math.floor((x - originX) / cellW)));
+	const rowOf = (y: number) =>
+		Math.min(rows - 1, Math.max(0, Math.floor((y - originY) / cellH)));
+
+	const at = new Int32Array(chips.length);
+	chips.forEach((chip, i) => {
+		const key = rowOf(chip.y) * cols + colOf(chip.x);
+		cells[key].push(i);
+		at[i] = key;
+	});
+
+	return {
+		hits(skip, x, y, w, h) {
+			const cx = colOf(x);
+			const cy = rowOf(y);
+
+			for (let gy = Math.max(0, cy - 1); gy <= Math.min(rows - 1, cy + 1); gy++) {
+				for (let gx = Math.max(0, cx - 1); gx <= Math.min(cols - 1, cx + 1); gx++) {
+					for (const j of cells[gy * cols + gx]) {
+						if (j === skip) continue;
+						if (overlaps(chips[j], x, y, w, h, spacing)) return true;
+					}
+				}
+			}
+
+			return false;
+		},
+
+		move(index, x, y) {
+			const key = rowOf(y) * cols + colOf(x);
+			if (key === at[index]) return;
+
+			const from = cells[at[index]];
+			const pos = from.indexOf(index);
+			if (pos >= 0) from.splice(pos, 1);
+
+			cells[key].push(index);
+			at[index] = key;
+		}
+	};
+}
+
 
 /**
  * Shake the packed chips off their rows.
@@ -124,7 +253,7 @@ function hits(chips: PlacedChip[], skip: number, x: number, y: number, w: number
  * are free to move vertically even when the island is full — which is where the
  * scatter comes from.
  */
-function scramble(chips: PlacedChip[], area: Rect, zoneKey: string) {
+function scramble(chips: PlacedChip[], area: Rect, zoneKey: string, grid: Grid) {
 	for (let pass = 0; pass < SCRAMBLE_PASSES; pass++) {
 		for (let i = 0; i < chips.length; i++) {
 			const chip = chips[i];
@@ -145,15 +274,119 @@ function scramble(chips: PlacedChip[], area: Rect, zoneKey: string) {
 					area.y + area.height - chip.h / 2
 				);
 
-				if (hits(chips, i, x, y, chip.w, chip.h)) continue;
+				if (grid.hits(i, x, y, chip.w, chip.h)) continue;
 
 				chip.x = x;
 				chip.y = y;
+				grid.move(i, x, y);
 				break;
 			}
 		}
 	}
 }
+
+/**
+ * Even out the spacing, once the chips are off their rows.
+ *
+ * A purely random scatter clumps: nothing in it knows how crowded a spot is, so
+ * it will happily drop a chip into a huddle and leave half an island bare. This
+ * is Lloyd's relaxation. The island is sampled on a grid, each sample is charged
+ * to whichever chip is nearest, and each chip then steps toward the middle of
+ * the region it owns. Crowded chips own little and get pushed apart; a chip
+ * beside empty space owns a lot and drifts into it. Repeated, that settles into
+ * even spacing which still looks scattered rather than gridded, because it
+ * starts from the scattered layout instead of a lattice.
+ *
+ * Moves go through the same collision check as everything else, so evening out
+ * the spacing can never introduce an overlap. It is deterministic — no random
+ * numbers at all — so the server and the browser still agree.
+ */
+const RELAX_PASSES = 6;
+const RELAX_RATE = 0.6;
+const RELAX_COLS = 26;
+const RELAX_ROWS = 20;
+
+/**
+ * Fewest samples a chip needs before the centre of its region means anything.
+ *
+ * The sampler is a fixed grid, so past a few hundred chips each one owns barely
+ * a sample and its "centroid" is just that sample's own position — the pass
+ * costs passes x samples x chips distance tests and then moves chips almost at
+ * random. A canvas that full has nothing to even out anyway: the rows already
+ * fill it and every move still has to clear the collision check. Skipping it
+ * there took opening the community island from a 236ms frame to a smooth one.
+ */
+const RELAX_MIN_SAMPLES_PER_CHIP = 3;
+
+function spreadEvenly(chips: PlacedChip[], area: Rect, grid: Grid) {
+	if (chips.length < 2) return;
+	if ((RELAX_COLS * RELAX_ROWS) / chips.length < RELAX_MIN_SAMPLES_PER_CHIP) return;
+
+	const sumX = new Float64Array(chips.length);
+	const sumY = new Float64Array(chips.length);
+	const count = new Int32Array(chips.length);
+
+	for (let pass = 0; pass < RELAX_PASSES; pass++) {
+		sumX.fill(0);
+		sumY.fill(0);
+		count.fill(0);
+
+		for (let gy = 0; gy < RELAX_ROWS; gy++) {
+			const sy = area.y + ((gy + 0.5) / RELAX_ROWS) * area.height;
+
+			for (let gx = 0; gx < RELAX_COLS; gx++) {
+				const sx = area.x + ((gx + 0.5) / RELAX_COLS) * area.width;
+
+				let best = 0;
+				let bestDistance = Infinity;
+
+				for (let i = 0; i < chips.length; i++) {
+					const dx = sx - chips[i].x;
+					const dy = sy - chips[i].y;
+					const distance = dx * dx + dy * dy;
+					if (distance < bestDistance) {
+						bestDistance = distance;
+						best = i;
+					}
+				}
+
+				sumX[best] += sx;
+				sumY[best] += sy;
+				count[best]++;
+			}
+		}
+
+		for (let i = 0; i < chips.length; i++) {
+			if (!count[i]) continue;
+
+			const chip = chips[i];
+			const wantX = (sumX[i] / count[i] - chip.x) * RELAX_RATE;
+			const wantY = (sumY[i] / count[i] - chip.y) * RELAX_RATE;
+
+			for (const step of SCRAMBLE_STEPS) {
+				const x = clampTo(
+					chip.x + wantX * step,
+					area.x + chip.w / 2,
+					area.x + area.width - chip.w / 2
+				);
+				const y = clampTo(
+					chip.y + wantY * step,
+					area.y + chip.h / 2,
+					area.y + area.height - chip.h / 2
+				);
+
+				if (grid.hits(i, x, y, chip.w, chip.h)) continue;
+
+				chip.x = x;
+				chip.y = y;
+				grid.move(i, x, y);
+				break;
+			}
+		}
+	}
+}
+
+
 
 function splitRandom(total: number, parts: number, seed: number): number[] {
 	if (parts <= 0) return [];
@@ -163,9 +396,10 @@ function splitRandom(total: number, parts: number, seed: number): number[] {
 	let sum = 0;
 
 	for (let i = 0; i < parts; i++) {
-		// The floor stops any one gap collapsing to nothing, which would read as
-		// two chips stuck together rather than as scatter.
-		const weight = 0.25 + seededRandom(seed ^ Math.imul(i + 1, 0x9e3779b9));
+		// The floor stops any one gap collapsing to nothing and caps how lopsided
+		// the split can get. It was 0.25, which let one gap take five times another
+		// and opened visible holes between bunched-up rows.
+		const weight = 0.6 + seededRandom(seed ^ Math.imul(i + 1, 0x9e3779b9));
 		weights.push(weight);
 		sum += weight;
 	}
@@ -223,9 +457,12 @@ export function chipFontUnits(baseUnits: number, viewBoxWidth: number, fullWidth
  * spacing drifts.
  */
 export function measureChip(name: string, fontUnits: number) {
+	const w = `#${name}`.length * fontUnits * 0.62 + fontUnits * PAD_X_RATIO;
+
 	return {
-		w: `#${name}`.length * fontUnits * 0.62 + 19.2,
-		h: fontUnits * 1.15 + 9
+		w,
+		// Includes the room the tilt sweeps, which depends on how wide the chip is.
+		h: fontUnits * 1.15 + fontUnits * PAD_Y_RATIO + w * TILT_SIN
 	};
 }
 
@@ -240,7 +477,7 @@ export function measureChip(name: string, fontUnits: number) {
 function fitLabel(name: string, fontUnits: number, maxWidth: number) {
 	const full = `#${name}`;
 	const charWidth = fontUnits * 0.62;
-	const usable = maxWidth - 19.2;
+	const usable = maxWidth - fontUnits * PAD_X_RATIO;
 
 	if (full.length * charWidth <= usable) return full;
 
@@ -248,7 +485,16 @@ function fitLabel(name: string, fontUnits: number, maxWidth: number) {
 	return `${full.slice(0, chars)}…`;
 }
 
-export type PackResult = { chips: PlacedChip[]; overflow: number };
+export type PackResult = {
+	chips: PlacedChip[];
+	overflow: number;
+	/**
+	 * Full height of the packed canvas, measured from the label box's top so it
+	 * is directly comparable to the box the chips are positioned against. Equal
+	 * to the island's own height unless `grow` let the canvas outgrow it.
+	 */
+	contentHeight: number;
+};
 
 /**
  * Bands at the top and bottom of the label area that chips must keep clear.
@@ -265,8 +511,19 @@ export function packChips(
 	fullArea: Rect,
 	fontUnits: number,
 	maxChips: number = MAX_CHIPS,
-	reserve: Reserve = { top: 0, bottom: 0 }
+	reserve: Reserve = { top: 0, bottom: 0 },
+	/**
+	 * Let the canvas grow to hold every chip instead of confining it to the
+	 * island. Used when an island is open and its contents can be dragged: there
+	 * is no page count, the canvas is simply as tall as the zone needs.
+	 */
+	grow: boolean = false
 ): PackResult {
+	// Gaps scale with the font, so zooming in tightens them the same way it
+	// shrinks the chips. Derived once and passed down, so no helper can fall back
+	// on a full-map constant while packing a zoomed island.
+	const spacing = spacingFor(fontUnits);
+
 	// Chips are laid out inside the area minus the reserved bands; callers still
 	// position them against `fullArea`, so the coordinates stay comparable.
 	const area: Rect = {
@@ -279,7 +536,7 @@ export function packChips(
 	const visible = channels.slice(0, maxChips);
 	const overflow = channels.length - visible.length;
 
-	type Item = { channel: SlackChannel; label: string; w: number; h: number };
+	type Item = { channel: SlackChannel; label: string; w: number; h: number; tilt: number };
 	type Row = { items: Item[]; w: number; h: number };
 
 	const rows: Row[] = [];
@@ -287,22 +544,37 @@ export function packChips(
 
 	for (const channel of visible) {
 		const label = fitLabel(channel.name, fontUnits, area.width);
-		const { h } = measureChip(channel.name, fontUnits);
-		const w = label.length * fontUnits * 0.62 + 19.2;
-		const widthIfAdded = row.items.length ? row.w + GAP_X + w : w;
+		// Tilt is derived from the channel name alone, so it is known here, before
+		// anything is placed. Reserving each chip's own sweep rather than the
+		// worst case matters: the average |tilt| is half the maximum, and charging
+		// every chip the maximum cost ten channels on the full map for room only
+		// the most-tilted ones ever use.
+		const seed = hashString(`${zoneKey}:${channel.name}`);
+		const tilt = Number(
+			((seededRandom(seed ^ 0x85ebca6b) - 0.5) * TILT_RANGE_DEG).toFixed(2)
+		);
+		// Measured from the truncated label, not the full name — a chip that got
+		// shortened must not keep reserving the room its full name needed.
+		const w = label.length * fontUnits * 0.62 + fontUnits * PAD_X_RATIO;
+		const h =
+			fontUnits * 1.15 +
+			fontUnits * PAD_Y_RATIO +
+			w * Math.sin((Math.abs(tilt) * Math.PI) / 180);
+		const widthIfAdded = row.items.length ? row.w + spacing.x + w : w;
 
 		if (widthIfAdded > area.width && row.items.length) {
 			rows.push(row);
 			row = { items: [], w: 0, h: 0 };
 		}
 
-		row.items.push({ channel, label, w, h });
-		row.w = row.items.length === 1 ? w : row.w + GAP_X + w;
+		row.items.push({ channel, label, w, h, tilt });
+		row.w = row.items.length === 1 ? w : row.w + spacing.x + w;
 		row.h = Math.max(row.h, h);
 	}
 	if (row.items.length) rows.push(row);
 
-	if (!rows.length) return { chips: [], overflow };
+	// Nothing to place, so the canvas never outgrows the island.
+	if (!rows.length) return { chips: [], overflow, contentHeight: fullArea.height };
 
 	// A narrow island produces one chip per row, and those rows can easily exceed
 	// its height — `software` is only ~215 units wide. Drop the rows that do not
@@ -312,21 +584,35 @@ export function packChips(
 	let usedHeight = 0;
 	let dropped = 0;
 
-	// Rows are fitted into less than the full height; the rest is the scatter
-	// budget, spent below on bands and leads. Slack is still measured against the
-	// real height, so the space held back here is exactly what the chips get to
-	// move around in.
-	const packHeight = area.height * (1 - SCATTER_SHARE);
 
-	for (const r of rows) {
-		const next = usedHeight ? usedHeight + GAP_Y + r.h : r.h;
-		if (next > packHeight && fitted > 0) break;
-		usedHeight = next;
-		fitted++;
+	if (grow) {
+		// Nothing is dropped: every row is kept and the canvas is made as tall as
+		// they need, so dragging can reach the whole zone.
+		for (const r of rows) {
+			usedHeight = usedHeight ? usedHeight + spacing.y + r.h : r.h;
+		}
+		fitted = rows.length;
+	} else {
+		const packHeight = area.height * (1 - SCATTER_SHARE);
+
+		for (const r of rows) {
+			const next = usedHeight ? usedHeight + spacing.y + r.h : r.h;
+			if (next > packHeight && fitted > 0) break;
+			usedHeight = next;
+			fitted++;
+		}
 	}
 
 	for (const r of rows.slice(fitted)) dropped += r.items.length;
 	rows.length = fitted;
+
+	// Grow the canvas to hold the rows, keeping the same proportion of slack for
+	// the scatter that a fixed island gets. This has to happen before the slack is
+	// worked out: every later step — band and lead distribution, scramble,
+	// spreadEvenly — measures against area.height.
+	if (grow) {
+		area.height = Math.max(area.height, usedHeight / (1 - SCATTER_SHARE));
+	}
 
 	const slackY = Math.max(0, area.height - usedHeight);
 
@@ -372,22 +658,32 @@ export function packChips(
 				y: y + item.h / 2 + seededRandom(seed ^ 0x9e3779b9) * travel,
 				w: item.w,
 				h: item.h,
-				tilt: Number(((seededRandom(seed ^ 0x85ebca6b) - 0.5) * 7).toFixed(2))
+				// The same tilt its height was measured against, so the room
+				// reserved for the sweep is the room the sweep actually uses.
+				tilt: item.tilt
 			});
 
-			// GAP_X stays as the floor so a small random share cannot let two
+			// spacing.x stays as the floor so a small random share cannot let two
 			// chips touch; the share is what varies the spacing.
-			x += item.w + GAP_X + gaps[i + 1];
+			x += item.w + spacing.x + gaps[i + 1];
 		});
 
-		y += band + GAP_Y + leads[rowIndex + 1];
+		y += band + spacing.y + leads[rowIndex + 1];
 	});
 
 	// The rows have done their job — they proved a valid arrangement exists.
 	// Break them up now that the chips no longer need to be in lines. Bounded by
 	// `area`, not `fullArea`, so the scatter cannot push a chip up under the zone
 	// title or down past the bottom edge.
-	scramble(chips, area, zoneKey);
+	// Both relaxation passes query and update the same grid, so the neighbour
+	// lookups stay cheap however many chips an open island holds.
+	const grid = buildGrid(chips, area, spacing);
+	scramble(chips, area, zoneKey, grid);
 
-	return { chips, overflow: overflow + dropped };
+	// ...then even out what the random pass left clumped.
+	spreadEvenly(chips, area, grid);
+
+	const contentHeight = Math.max(fullArea.height, reserve.top + area.height + reserve.bottom);
+
+	return { chips, overflow: overflow + dropped, contentHeight };
 }

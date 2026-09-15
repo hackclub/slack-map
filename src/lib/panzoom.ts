@@ -1,5 +1,8 @@
 export type ViewBox = { x: number; y: number; width: number; height: number };
 
+/** A translation in viewBox units. */
+export type Offset = { x: number; y: number };
+
 export type PanZoomOptions = {
 	get: () => ViewBox;
 	set: (viewBox: ViewBox) => void;
@@ -18,9 +21,28 @@ export type PanZoomOptions = {
 	 * stayed unset after clicking into an island, where panning IS possible.
 	 */
 	view?: ViewBox;
+	/**
+	 * When set, a drag moves the opened island's contents instead of the map.
+	 *
+	 * The coastline is drawn from the viewBox, so panning the viewBox would slide
+	 * the island itself across the screen. Here the viewBox is left untouched and
+	 * only this offset moves, which is what keeps the boundary fixed while more
+	 * channels come into view.
+	 *
+	 * `offset` and `range` are plain values rather than getters for the same
+	 * reason `view` is: Svelte only tracks what an options literal names directly,
+	 * and a range read inside a closure would go stale — leaving a grab cursor on
+	 * an island with nothing left to move.
+	 */
+	content?: {
+		offset: Offset;
+		/** Content extent minus the visible window, in viewBox units. */
+		range: Offset;
+		set: (offset: Offset) => void;
+	};
 	/** Disables interaction — used while an island is zoom-expanded. */
 	disabled?: boolean;
-}; 
+};
 
 /**
  * Svelte action giving the map a hand tool: drag to pan, wheel to zoom.
@@ -36,9 +58,14 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	let startX = 0;
 	let startY = 0;
 	let startViewBox: ViewBox | null = null;
+	/** Content offset when the drag began, in content mode. */
+	let startContent: Offset | null = null;
 
 	/** Movement before a press becomes a pan rather than a click. */
 	const DRAG_THRESHOLD_PX = 4;
+
+	const clampRange = (value: number, min: number, max: number) =>
+		Math.min(Math.max(value, min), max);
 
 	/**
 	 * There is only somewhere to pan once the view is smaller than the map. At
@@ -47,6 +74,12 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	 */
 	function canPan() {
 		if (opts.disabled) return false;
+
+		// In content mode the map never moves, so the only question is whether the
+		// island holds more than it can show at once.
+		if (opts.content) {
+			return opts.content.range.x > 0.5 || opts.content.range.y > 0.5;
+		}
 
 		const world = opts.world;
 		if (!world) return true;
@@ -97,10 +130,19 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		return opts.get().width / width;
 	}
 
+	/**
+	 * Controls that must keep their own press behaviour rather than starting a
+	 * drag. Everything else over the map is fair game, chips included.
+	 */
+	const NO_DRAG = '.legend-panel, .map-header, .zoom-close, .hackclub-flag, .channel-modal';
+
 	function onPointerDown(event: PointerEvent) {
 		// Not just cosmetic: starting a drag with nowhere to pan would still mark
 		// the gesture as a drag and swallow the click that zooms into an island.
 		if (!canPan() || event.button !== 0) return;
+
+		const target = event.target as Element | null;
+		if (target?.closest?.(NO_DRAG)) return;
 
 		// Deliberately NOT capturing the pointer here. setPointerCapture retargets
 		// later pointer events to this <svg>, which makes the browser dispatch the
@@ -111,10 +153,11 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		startX = event.clientX;
 		startY = event.clientY;
 		startViewBox = opts.get();
+		startContent = opts.content ? { ...opts.content.offset } : null;
 	}
 
 	function onPointerMove(event: PointerEvent) {
-		if (!pending || !startViewBox) return;
+		if (!pending) return;
 
 		const dx = event.clientX - startX;
 		const dy = event.clientY - startY;
@@ -123,11 +166,25 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 			if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return;
 			// Past the threshold this is a pan, so take the pointer now.
 			dragging = true;
-			node.setPointerCapture(event.pointerId);
+			surface.setPointerCapture(event.pointerId);
 			applyCursor();
 		}
 
 		const scale = unitsPerPixel();
+
+		// Dragging down pulls the content down, revealing what sits above it, so
+		// the offset runs from -range (pulled fully up) to 0.
+		if (opts.content && startContent) {
+			const { range } = opts.content;
+			opts.content.set({
+				x: clampRange(startContent.x + dx * scale, -range.x, 0),
+				y: clampRange(startContent.y + dy * scale, -range.y, 0)
+			});
+			return;
+		}
+
+		if (!startViewBox) return;
+
 		commit({
 			...startViewBox,
 			x: startViewBox.x - dx * scale,
@@ -142,20 +199,31 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		pending = false;
 		dragging = false;
 		startViewBox = null;
-		if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
+		startContent = null;
+		if (surface.hasPointerCapture(event.pointerId)) {
+			surface.releasePointerCapture(event.pointerId);
+		}
 		applyCursor();
 
-		// Only a real drag suppresses the click; a plain press must still zoom.
+		// Only a real drag suppresses the click; a plain press must still zoom, and
+		// must still open a chip's modal. Capturing on the stage covers chips too,
+		// so dragging from one moves the island instead of opening it.
 		if (wasDragging) {
 			const swallow = (e: Event) => e.stopPropagation();
-			node.addEventListener('click', swallow, { capture: true, once: true });
-			setTimeout(() => node.removeEventListener('click', swallow, { capture: true }), 0);
+			surface.addEventListener('click', swallow, { capture: true, once: true });
+			setTimeout(() => surface.removeEventListener('click', swallow, { capture: true }), 0);
 		}
 	}
 
 	function onWheel(event: WheelEvent) {
 		if (opts.disabled) return;
+		// preventDefault runs first either way, so a wheel over an open island does
+		// not scroll the page behind it.
 		event.preventDefault();
+
+		// With an island open there is nothing for the wheel to do: zooming would
+		// move the coastline, and the contents move by dragging, not scrolling.
+		if (opts.content) return;
 
 		const viewBox = opts.get();
 		const { minWidth = 200, maxWidth = 4000 } = opts.bounds ?? {};
@@ -183,14 +251,29 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 		applyCursor();
 	}
 
+	/**
+	 * Pointer events are listened for on the stage, not the <svg>.
+	 *
+	 * The chips live in a sibling layer stacked above the map, so a press that
+	 * lands on one never reaches the svg at all. With an island open and well over
+	 * a hundred chips on screen, that made most of the island a dead zone where
+	 * dragging did nothing. Listening on their common ancestor catches the press
+	 * wherever it starts; NO_DRAG keeps the real controls behaving normally, and
+	 * the 4px threshold still lets a plain click through to the chip underneath.
+	 *
+	 * Measurement stays on the svg — `node` — because that is what the viewBox
+	 * maps onto.
+	 */
+	const surface: Element = node.parentElement ?? node;
+
 	node.style.touchAction = 'none';
 	applyCursor();
 
-	node.addEventListener('pointerdown', onPointerDown);
-	node.addEventListener('pointermove', onPointerMove);
-	node.addEventListener('pointerup', onPointerUp);
-	node.addEventListener('pointercancel', onPointerUp);
-	node.addEventListener('wheel', onWheel, { passive: false });
+	surface.addEventListener('pointerdown', onPointerDown as EventListener);
+	surface.addEventListener('pointermove', onPointerMove as EventListener);
+	surface.addEventListener('pointerup', onPointerUp as EventListener);
+	surface.addEventListener('pointercancel', onPointerUp as EventListener);
+	surface.addEventListener('wheel', onWheel as EventListener, { passive: false });
 
 	return {
 		update(next: PanZoomOptions) {
@@ -198,11 +281,11 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 			applyCursor();
 		},
 		destroy() {
-			node.removeEventListener('pointerdown', onPointerDown);
-			node.removeEventListener('pointermove', onPointerMove);
-			node.removeEventListener('pointerup', onPointerUp);
-			node.removeEventListener('pointercancel', onPointerUp);
-			node.removeEventListener('wheel', onWheel);
+			surface.removeEventListener('pointerdown', onPointerDown as EventListener);
+			surface.removeEventListener('pointermove', onPointerMove as EventListener);
+			surface.removeEventListener('pointerup', onPointerUp as EventListener);
+			surface.removeEventListener('pointercancel', onPointerUp as EventListener);
+			surface.removeEventListener('wheel', onWheel as EventListener);
 		}
 	};
 }

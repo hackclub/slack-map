@@ -56,7 +56,7 @@ export const FALLBACK_ZONE = 'community';
  * @param {string} pattern
  * @returns {boolean}
  */
-function matchesPattern(name, pattern) {
+export function matchesPattern(name, pattern) {
 	if (pattern.includes('-')) return name.includes(pattern);
 
 	const tokens = name.split(/[^a-z0-9]+/).filter(Boolean);

@@ -58,6 +58,16 @@ const FILL = 0.75;
  */
 const MIN_SPAN = 2;
 
+/**
+ * Fewest channels a window should show when MIN_SPAN spreads a zone out.
+ *
+ * Spreading nine channels over four windows' worth of area leaves an opened
+ * island almost empty, with the odd chip at its edges. A zone too small to
+ * spread that far without dropping below this gets only as much room as keeps
+ * the window this full.
+ */
+const MIN_PER_WINDOW = 12;
+
 /** How much the area grows each time the channels don't all fit. */
 const GROW = 1.08;
 
@@ -92,9 +102,14 @@ export function createTileField(
 	 * don't all fit, which only happens when many cells hold less than their share.
 	 */
 	function layout(span: number) {
-		// Whole cells no bigger than the window and never under half of it, so no
-		// cell is a sliver that would cut long names short.
-		const count = Math.max(1, Math.ceil(span - 1e-6));
+		// Cells a third to a half of the window across. Every cell the window touches
+		// is drawn whole, so window-sized cells drew up to nine windows' worth of
+		// chips at once — 1,500 of them in a large zone. Much smaller and they would
+		// cut long names short, since a chip can't be wider than its cell.
+		// The count is odd so one cell sits in the middle, under the window as the
+		// island opens, holding the busiest channels; with an even count the cells
+		// met at the centre and the middle of the island opened empty.
+		const count = 2 * Math.floor(span + 1e-6) + 1;
 		const width = span * area.width;
 		const height = span * area.height;
 		const x0 = area.x - (width - area.width) / 2;
@@ -124,20 +139,24 @@ export function createTileField(
 		cells.sort((a, b) => distance(a) - distance(b) || a.row - b.row || a.col - b.col);
 
 		// starts[i] is the first channel in cell i; the last entry is where they ran out.
+		// Each cell fills up to a running target rather than taking a fixed share,
+		// so a zone with fewer channels than cells leaves its empty cells evenly
+		// spread through the area instead of all out at the edge, and a cell that
+		// fits less than its share (fitRows keeps whole rows) passes the rest on.
 		const starts = [0];
 		for (let i = 0; i < cells.length; i++) {
 			const start = starts[i];
-			const share = Math.ceil((total - start) / (cells.length - i));
-			// fitRows keeps whole rows, so a cell can take slightly less than its share.
-			const fits = share
-				? countFitting(
-						seedFor(i),
-						channels.slice(start, start + share),
-						inset(cells[i]),
-						fontUnits,
-						reserve
-					)
-				: 0;
+			const want = Math.round(((i + 1) * total) / cells.length) - start;
+			const fits =
+				want > 0
+					? countFitting(
+							seedFor(i),
+							channels.slice(start, start + want),
+							inset(cells[i]),
+							fontUnits,
+							reserve
+						)
+					: 0;
 			starts.push(start + fits);
 		}
 
@@ -158,7 +177,9 @@ export function createTileField(
 	// which is what gives sideways travel as well as vertical. Sizing it square on
 	// screen instead turned every mid-sized zone into a single column of pages on
 	// a wide monitor, and those could only be moved up and down.
-	let span = total > 1 ? Math.max(MIN_SPAN, Math.sqrt(total / (capacity * FILL))) : 1;
+	const needed = Math.sqrt(total / (capacity * FILL));
+	const roomy = Math.min(MIN_SPAN, Math.sqrt(total / MIN_PER_WINDOW));
+	let span = Math.max(1, needed, roomy);
 	let plan = layout(span);
 	// Every cell always fits at least one row, so growing eventually fits them all.
 	while (!plan) {

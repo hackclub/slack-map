@@ -49,11 +49,23 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function fetchChannels(options?: { refresh?: boolean }): Promise<SlackChannel[]> {
-	// `refresh` tells the server to drop its cache — used by the retry button.
+	return (await fetchChannelList(options)).channels;
+}
+
+/**
+ * The channel list plus whether the server is still crawling for more.
+ *
+ * `refresh` tells the server to drop its cache — used by the retry button.
+ */
+export async function fetchChannelList(options?: {
+	refresh?: boolean;
+}): Promise<{ channels: SlackChannel[]; crawling: boolean }> {
 	const url = options?.refresh ? '/api/slack-channels?refresh=1' : '/api/slack-channels';
-	const response = await fetch(url);
-	const payload = await readJson<{ channels: SlackChannel[] }>(response);
-	return payload.channels;
+	// no-store: a poll must never be answered from the browser's own cache with
+	// the partial list it is polling to replace.
+	const response = await fetch(url, { cache: 'no-store' });
+	const payload = await readJson<{ channels: SlackChannel[]; crawling?: boolean }>(response);
+	return { channels: payload.channels, crawling: payload.crawling ?? false };
 }
 
 export async function fetchChannelInfo(channelId: string): Promise<SlackChannelDetails> {

@@ -8,13 +8,14 @@ import type { PageServerLoad } from './$types.js';
  */
 export const load: PageServerLoad = async () => {
 	try {
-		const { channels, state, error } = await getChannels();
-		return { channels, cacheState: state, loadError: error ?? '' };
+		const { channels, state, crawling, error } = await getChannels();
+		return { channels, cacheState: state, crawling, loadError: error ?? '' };
 	} catch (error) {
 		// Render the map anyway; the page keeps its retry button.
 		return {
 			channels: [],
 			cacheState: 'miss' as const,
+			crawling: false,
 			loadError: error instanceof Error ? error.message : 'Unable to load workspace'
 		};
 	}

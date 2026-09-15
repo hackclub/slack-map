@@ -4,6 +4,7 @@
 	import { cubicInOut } from 'svelte/easing';
 	import {
 		fetchChannels,
+		fetchChannelList,
 		fetchChannelInfo,
 		type SlackChannel,
 		type SlackChannelDetails
@@ -11,12 +12,8 @@
 	import { zoneForChannelName } from '../lib/zones.js';
 	import ChannelModal from '../lib/ChannelModal.svelte';
 	import { loadCustomEmoji } from '../lib/emoji.js';
-	import {
-		chipFontUnits,
-		packChips,
-		MAX_CHIPS,
-		MAX_CHIPS_ZOOMED
-	} from '../lib/islandLayout.js';
+	import { chipFontUnits, packChips, MAX_CHIPS } from '../lib/islandLayout.js';
+	import { createTileField } from '../lib/islandTiles.js';
 	import { panzoom, type ViewBox, type Offset } from '../lib/panzoom.js';
 	import OnboardingTour from '../lib/tour/OnboardingTour.svelte';
 	import { hasSeenTour } from '../lib/tour/storage.js';
@@ -41,10 +38,16 @@
 	const ZOOM_PADDING = 15;
 	const ZOOM_MS = 700;
 
+	/**
+	 * How often to ask for the rest of the workspace while the server is still
+	 * crawling. The crawl lands a page of channels every few seconds; this only
+	 * needs to be frequent enough that the islands visibly fill in.
+	 */
+	const CHANNEL_POLL_MS = 15000;
+
 
 	let customEmoji: Record<string, string> = {};
 
-	let packViewWidth = 1100;
 	let isAnimating = false;
 	let viewSeq = 0;
 
@@ -133,6 +136,13 @@
 	// Seeded from the server load, so the very first paint already has channels
 	// instead of showing "No channels yet" until a client fetch resolves.
 	let channels: SlackChannel[] = data.channels;
+	/**
+	 * A newer channel list that arrived while an island was open. Held back until
+	 * it closes: new channels slot in by member count, which reshuffles every page
+	 * after the first, and chips jumping under the pointer mid-drag is worse than
+	 * waiting.
+	 */
+	let pendingChannels: SlackChannel[] | null = null;
 	let selectedChannel: SlackChannel | null = null;
 	let isBooting = false;
 	let bootError = data.loadError;
@@ -141,9 +151,10 @@
 	/**
 	 * How far the opened island's contents have been dragged, in viewBox units.
 	 *
-	 * Only meaningful while an island is open. Negative y means the content has
-	 * been pulled up to bring what is below it into view. The island's own
-	 * coastline never moves — this is the only thing that does.
+	 * Only meaningful while an island is open. Negative values mean the content
+	 * has been pulled up or left, bringing the pages below or right of it into
+	 * view. The island's own coastline never moves — this is the only thing that
+	 * does.
 	 */
 	let contentOffset: Offset = { x: 0, y: 0 };
 
@@ -203,21 +214,28 @@
 	/**
 	 * Chips carry absolute viewBox coordinates from the packer, so they are
 	 * expressed as a percentage of their own island's area to stay put when the
-	 * container resizes.
+	 * container resizes. In an opened island, chips on other pages land outside
+	 * 0-100% and are brought into the box by the content layer's drag transform.
 	 */
-	function chipOffset(chip: { x: number; y: number }, area: LabelArea, contentHeight: number) {
+	function chipOffset(chip: { x: number; y: number }, area: LabelArea) {
 		return {
 			left: `${((chip.x - area.x) / area.width) * 100}%`,
-			// Vertically this is a fraction of the packed content, not of the island:
-			// an open island packs its whole zone, so the content can be far taller
-			// than the box showing it.
-			top: `${((chip.y - area.y) / contentHeight) * 100}%`
+			top: `${((chip.y - area.y) / area.height) * 100}%`
+		};
+	}
+
+	/** The view that frames one island when it is opened. */
+	function islandView(zoneKey: string): ViewBox {
+		const bounds = islandBounds[zoneKey];
+		return {
+			x: bounds.minX - ZOOM_PADDING,
+			y: bounds.minY - ZOOM_PADDING,
+			width: bounds.width + ZOOM_PADDING * 2,
+			height: bounds.height + ZOOM_PADDING * 2
 		};
 	}
 
 	function setView(next: ViewBox, duration = ZOOM_MS) {
-		packViewWidth = next.width;
-
 		if (duration) {
 			isAnimating = true;
 			const seq = ++viewSeq;
@@ -271,95 +289,95 @@
 	$: selectedZoneKey =
 		highlightedZoneKey ?? (selectedChannel ? getZoneForChannel(selectedChannel).key : null);
 	/**
-	 * Chips packed into each island's fixed text area.
+	 * The full map's chips: the head of each zone, packed into its island's fixed
+	 * text area.
 	 *
 	 * Islands are never resized — the coastlines and their verified 15px
-	 * separation stay exactly as authored. More channels appear by zooming into
-	 * an island: that narrows the viewBox, so each chip covers fewer viewBox
-	 * units and far more of them fit in the same area.
-	 *
-	 * Depends on `channels` and `zoomedZoneKey` only — both discrete. It must not
-	 * depend on the viewBox tween, or every frame of the zoom animation (and every
-	 * pointermove while panning) would re-pack every chip.
+	 * separation stay exactly as authored — and the full map never zooms, so this
+	 * always packs at the full-map font. Depends on `channels` alone: nothing about
+	 * opening an island or dragging inside it re-packs these.
 	 */
-	/**
-	 * Current zoom level, quantised into steps.
-	 *
-	 * Chip capacity tracks how far in you are: the further you zoom, the fewer
-	 * viewBox units each fixed-size chip covers, so more of them fit. Packing off
-	 * the raw tween would re-pack every animation frame and every pointermove
-	 * while panning; rounding to 50-unit steps means it only recomputes when you
-	 * actually cross a level.
-	 */
-	const ZOOM_QUANTUM = 50;
-	$: packWidth =
-		Math.max(ZOOM_QUANTUM, Math.round(packViewWidth / ZOOM_QUANTUM) * ZOOM_QUANTUM);
-
 	$: zoneEntries = zones.map((zone) => {
 		const list = getChannelsForZone(zone.key, channels);
 		const area = labelAreas[zone.key];
-		const isZoomed = zoomedZoneKey === zone.key;
 
-		const fontUnits = chipFontUnits(CHIP_FONT_UNITS, packWidth);
-		// Zoomed in far enough that the island fills the view, the cap rises with
-		// the room available rather than sitting at one fixed number.
-		const zoomFactor = 1100 / packWidth;
-		const cap = Math.round(Math.min(MAX_CHIPS_ZOOMED, MAX_CHIPS * zoomFactor * zoomFactor));
-
-		// Keep chips clear of the zone title, which is pinned to the top of the
-		// area. It is hidden while zoomed, so no band is needed then. The bottom
-		// band used to be for the "+N more" badge; with that gone it stays as edge
-		// padding, so the last row does not sit flush against the coastline.
-		const { chips, contentHeight } = packChips(
+		const { chips } = packChips(
 			zone.key,
 			list,
 			area,
-			fontUnits,
-			// An open island packs its whole zone and is dragged to reach the rest,
-			// so the only ceiling left is the one that keeps the packing affordable.
-			isZoomed ? MAX_CHIPS_ZOOMED : cap,
-			// Measured in the browser, and re-measured after the heading was
-			// enlarged: the title renders ~14.2 viewBox units tall.
-			// The title's own height does not scale with the chip font, so the
-			// multiplier drops as CHIP_FONT_UNITS rises. The bottom band was sized
-			// for the "+N more" badge; with that gone it only needs to keep the last
-			// chip off the coastline.
-			{ top: isZoomed ? 0 : fontUnits * 1.2, bottom: fontUnits * 0.4 },
-			isZoomed
+			CHIP_FONT_UNITS,
+			MAX_CHIPS,
+			// Keeps chips clear of the zone title pinned to the top of the area. The
+			// title renders ~14.2 viewBox units tall; the bottom band keeps the last
+			// row off the coastline.
+			{ top: CHIP_FONT_UNITS * 1.2, bottom: CHIP_FONT_UNITS * 0.4 }
 		);
 
-		return { ...zone, channels: list, area, chips, contentHeight };
+		return { ...zone, channels: list, area, chips };
 	});
 
 	$: zoomedZone = zoneEntries.find((zone) => zone.key === zoomedZoneKey) ?? null;
 
 	/**
-	 * How far the open island's contents can travel: the packed canvas minus the
-	 * window showing it. Zero on a zone whose channels all fit, which is what
-	 * keeps the grab cursor off islands with nothing to drag.
+	 * The opened island's whole zone, laid out as pages that spiral out from the
+	 * one it opens on. See islandTiles.ts.
+	 *
+	 * Chips render at a fixed CSS size, so in the opened view each covers fewer
+	 * viewBox units; the font is scaled to that view's width, which is what fits
+	 * more channels onto every page.
 	 */
-	$: contentRange = zoomedZone
-		? { x: 0, y: Math.max(0, zoomedZone.contentHeight - zoomedZone.area.height) }
-		: { x: 0, y: 0 };
+	$: tileField = zoomedZone
+		? createTileField(
+				zoomedZone.key,
+				zoomedZone.channels,
+				zoomedZone.area,
+				chipFontUnits(CHIP_FONT_UNITS, islandView(zoomedZone.key).width),
+				pageAspect(zoomedZone.key)
+			)
+		: null;
+
+	let terrainEl: SVGSVGElement | null = null;
 
 	/**
-	 * Size and drag transform for each island's content layer.
-	 *
-	 * Computed here rather than in a template `{@const}` because that compiles
-	 * inside `$.untrack(...)` — a `contentOffset` read in there is invisible to
-	 * Svelte, and the layer stayed frozen while the pointer moved. Same trap that
-	 * froze the labels during the zoom tween; see labelBoxes.
+	 * One page's width over its height as it appears on screen once the island is
+	 * open. The SVG stretches x and y independently, so a page that is nearly
+	 * square in viewBox units can be twice as wide as it is tall on a wide monitor
+	 * — and the area of pages is meant to come out square on screen, not in units.
 	 */
-	$: contentStyles = Object.fromEntries(
-		zoneEntries.map((zone) => {
-			const dragged = zoomedZoneKey === zone.key ? contentOffset.y : 0;
-			return [
-				zone.key,
-				`height:${(zone.contentHeight / zone.area.height) * 100}%;` +
-					`transform:translateY(${(dragged / zone.contentHeight) * 100}%);`
-			];
-		})
+	function pageAspect(zoneKey: string) {
+		const area = labelAreas[zoneKey];
+		const view = islandView(zoneKey);
+		const rect = terrainEl?.getBoundingClientRect();
+		if (!rect?.width || !rect.height) return area.width / area.height;
+		return ((area.width / view.width) * rect.width) / ((area.height / view.height) * rect.height);
+	}
+
+	/**
+	 * Which pages are near the window. A string, so the statement below re-runs
+	 * only when a page edge is crossed — not on every pointermove of a drag.
+	 */
+	$: visibleTileKey = tileField ? tileField.visibleKey(contentOffset) : '';
+	$: zoomedChips = tileField ? tileField.chipsFor(visibleTileKey) : [];
+
+	/**
+	 * The chips each island draws. Built here rather than in a template `{@const}`
+	 * because that compiles inside `$.untrack(...)`, where a read of `zoomedChips`
+	 * would be invisible to Svelte and the pages would never swap in.
+	 */
+	$: chipsByZone = Object.fromEntries(
+		zoneEntries.map((zone) => [zone.key, zone.key === zoomedZoneKey ? zoomedChips : zone.chips])
 	);
+
+	/**
+	 * The drag transform on the opened island's content layer, as a percentage of
+	 * the label box it sits in. Named `contentOffset` directly for the same
+	 * tracking reason as above — the layer froze while the pointer moved when this
+	 * was read inside the template.
+	 */
+	$: zoomedContentStyle = zoomedZone
+		? `transform:translate(${(contentOffset.x / zoomedZone.area.width) * 100}%,` +
+			`${(contentOffset.y / zoomedZone.area.height) * 100}%);`
+		: '';
 
 	onMount(() => {
 		// Channels already arrived with the server render; only the optional emoji
@@ -371,7 +389,42 @@
 		// Client-only on purpose: the tour reads localStorage, and opening it during
 		// SSR would flash it at returning visitors before hydration hid it again.
 		if (!hasSeenTour()) startTour();
+
+		// A cold server answers with the first ~500 channels and keeps crawling for
+		// minutes. Without coming back for the rest, every island but community
+		// stayed at a handful of channels — too few to fill even one page, so
+		// there was nothing to drag through.
+		let pollTimer: number | undefined;
+		let stopped = false;
+
+		async function poll() {
+			try {
+				const { channels: next, crawling } = await fetchChannelList();
+				// The crawl only ever adds, so a longer list is a newer one.
+				if (next.length > (pendingChannels ?? channels).length) {
+					if (zoomedZoneKey) pendingChannels = next;
+					else channels = next;
+				}
+				if (!crawling) return;
+			} catch {
+				// A failed poll just waits for the next one.
+			}
+			if (!stopped) pollTimer = window.setTimeout(poll, CHANNEL_POLL_MS);
+		}
+
+		if (data.crawling) pollTimer = window.setTimeout(poll, CHANNEL_POLL_MS);
+
+		return () => {
+			stopped = true;
+			window.clearTimeout(pollTimer);
+		};
 	});
+
+	/** Applies a list that arrived mid-drag as soon as the island is closed. */
+	$: if (!zoomedZoneKey && pendingChannels) {
+		channels = pendingChannels;
+		pendingChannels = null;
+	}
 
 	/**
 	 * The tour's spotlight is cut from the islands' own paths in world space, so
@@ -460,17 +513,9 @@
 		if (zoomedZoneKey === zoneKey) {
 			zoomedZoneKey = null;
 			setView({ x: 0, y: 0, width: 1100, height: 800 });
-		} else {
+		} else if (islandBounds[zoneKey]) {
 			zoomedZoneKey = zoneKey;
-			const bounds = islandBounds[zoneKey];
-			if (bounds) {
-				setView({
-					x: bounds.minX - ZOOM_PADDING,
-					y: bounds.minY - ZOOM_PADDING,
-					width: bounds.width + ZOOM_PADDING * 2,
-					height: bounds.height + ZOOM_PADDING * 2
-				});
-			}
+			setView(islandView(zoneKey));
 		}
 	}
 </script>
@@ -529,37 +574,29 @@
 				<div>
 					<p class="kicker">Workspace atlas</p>
 					<h1 id="map-title">Slack Map</h1>
-					<button class="tour-replay" on:click={startTour}>Take the tour</button>
 				</div>
 			</header>
 
 			<svg
 				class="terrain"
+				bind:this={terrainEl}
 				class:zoomed={zoomedZoneKey !== null}
 				viewBox={svgViewBox}
 				preserveAspectRatio="none"
 				aria-hidden="true"
 				use:panzoom={{
-					get: () => $viewBoxTween,
-					set: (vb) => setView(vb, 0),
-					// Stays enabled while an island is expanded: dragging moves around
-					// inside it and the wheel zooms further in, which is how the channels
-					// beyond the visible ones are reached.
-					bounds: { minWidth: 90, maxWidth: 1100 },
-					// The whole map is as far out as you can go, and panning stops at
-					// its edges rather than drifting into empty space.
-					world: { x: 0, y: 0, width: 1100, height: 800 },
-					// Named directly so the action re-runs on zoom and the grab cursor
-					// appears only once there is somewhere to pan.
+					// Named directly so the action re-runs as the view changes, keeping
+					// its pixel-to-unit conversion current through the open animation.
 					view: $viewBoxTween,
-					// While an island is open the map is frozen and the drag moves what
-					// is inside the coastline instead. `contentOffset` and `contentRange`
-					// are named directly here for the same reason `view` is — read inside
-					// a closure they would be invisible to Svelte and go stale.
-					content: zoomedZoneKey
+					// The full map neither zooms nor pans. With an island open the map is
+					// frozen and dragging moves through its pages instead. `contentOffset`
+					// and `tileField` are named directly for the same reason `view` is —
+					// read inside a closure they would be invisible to Svelte and go stale.
+					content: tileField
 						? {
 								offset: contentOffset,
-								range: contentRange,
+								min: tileField.min,
+								max: tileField.max,
 								set: (next) => (contentOffset = next)
 							}
 						: undefined
@@ -617,10 +654,13 @@
 					>
 						<p class="zone-title">{zone.label}</p>
 						{#if zoomedZoneKey === null || zoomedZoneKey === zone.key}
-							{#if zone.chips.length}
-									<div class="zone-content" style={contentStyles[zone.key]}>
-								{#each zone.chips as chip (chip.channel.id)}
-									{@const spot = chipOffset(chip, zone.area, zone.contentHeight)}
+							{#if chipsByZone[zone.key].length}
+								<div
+									class="zone-content"
+									style={zoomedZoneKey === zone.key ? zoomedContentStyle : ''}
+								>
+								{#each chipsByZone[zone.key] as chip (chip.channel.id)}
+									{@const spot = chipOffset(chip, zone.area)}
 									<button
 										class:selected-channel={selectedChannel?.id === chip.channel.id}
 										class="zone-channel"
@@ -658,8 +698,9 @@
 				</button>
 			{/if}
 
-			<aside class="legend-panel" bind:this={legendEl}>
-				<nav class="legend" aria-label="Channel categories">
+			<aside class="legend-panel">
+				<!-- bound to the nav, not the aside, so the tour frames the categories without the button -->
+				<nav class="legend" aria-label="Channel categories" bind:this={legendEl}>
 					{#each zones as zone}
 						<button
 							class:active={selectedZoneKey === zone.key}
@@ -679,6 +720,11 @@
 						</button>
 					{/each}
 				</nav>
+
+				<button class="tour-replay" on:click={startTour}>
+					<img src="/orpheus-wave.png" alt="" width="427" height="585" />
+					Take the tour
+				</button>
 			</aside>
 
 			{#if tourOpen}
@@ -864,23 +910,6 @@
 		font-weight: 900;
 	}
 
-	.tour-replay {
-		margin-top: 0.5rem;
-		border: 1px solid rgba(255, 255, 255, 0.3);
-		border-radius: 999px;
-		padding: 0.3rem 0.8rem;
-		background: rgba(255, 255, 255, 0.08);
-		color: rgba(255, 255, 255, 0.85);
-		font-size: 0.8rem;
-		font-weight: 700;
-		cursor: pointer;
-	}
-
-	.tour-replay:hover {
-		background: rgba(255, 255, 255, 0.16);
-		color: #fff;
-	}
-
 	.terrain {
 		position: absolute;
 		inset: 0;
@@ -944,15 +973,14 @@
 	}
 
 	/*
-		The layer that gets dragged when an island is open. Its height is the packed
-		canvas, which can be far taller than the island, and translateY is how far it
-		has been pulled — both come from the packer, via contentOffset.
+		The layer that gets dragged when an island is open. It is exactly the label
+		box, so chip percentages resolve against the page they were packed into;
+		chips on neighbouring pages sit outside 0-100% and the translate brings them
+		in — see zoomedContentStyle.
 	*/
 	.zone-content {
 		position: absolute;
-		left: 0;
-		right: 0;
-		top: 0;
+		inset: 0;
 		transform-origin: 0 0;
 		will-change: transform;
 	}
@@ -1106,7 +1134,8 @@
 			chips each time. Measured over the open animation: p95 frame 41.6ms
 			without it, 13.9ms with. Promoting only while animating was measurably
 			worse (27.9ms): the layers get built after the tween has already begun.
-			Bounded by MAX_CHIPS_ZOOMED, so this is at most 150 small layers.
+			An opened island only draws the pages near its window (islandTiles.ts),
+			so the layer count stays bounded however large the zone is.
 		*/
 		will-change: transform;
 		width: max-content;
@@ -1205,6 +1234,42 @@
 		flex: none;
 	}
 
+	/*
+		Lives in the legend panel so it sits on the lagoon with the categories: the
+		same dark-on-light as the legend, instead of pale text fighting the gold wash
+		under the title.
+	*/
+	.tour-replay {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.55rem;
+		margin-top: 1.5rem;
+		border: 0;
+		border-radius: 999px;
+		padding: 0.45rem 1.1rem 0.45rem 0.55rem;
+		background: #1d222c;
+		color: #fff;
+		font-size: clamp(0.9rem, 1.1vw, 1.05rem);
+		font-weight: 700;
+		cursor: pointer;
+		box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+		transition:
+			transform 0.15s ease,
+			background 0.15s ease;
+	}
+
+	.tour-replay img {
+		/* the art faces left; mirrored so Orpheus looks at the label */
+		width: auto;
+		height: 1.9rem;
+		transform: scaleX(-1);
+	}
+
+	.tour-replay:hover {
+		background: #ec3750;
+		transform: translateY(-2px);
+	}
+
 	.refresh-button {
 		border: 0;
 		border-radius: 999px;
@@ -1293,6 +1358,19 @@
 		.legend {
 			grid-template-columns: 1fr 1fr;
 			gap: 0.8rem 1rem;
+		}
+
+		/*
+			Five categories in two columns leave the right column's third row empty.
+			The button takes that slot rather than adding a row, which would push the
+			legend further up over the islands.
+		*/
+		.tour-replay {
+			position: absolute;
+			right: 0;
+			bottom: 0;
+			margin-top: 0;
+			font-size: 0.85rem;
 		}
 
 		.map-error {

@@ -6,14 +6,18 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (url.searchParams.get('refresh')) invalidateChannels();
 
 	try {
-		const { channels, state, error } = await getChannels();
+		const { channels, state, crawling, error } = await getChannels();
 
-		return new Response(JSON.stringify({ channels, state, error }), {
+		return new Response(JSON.stringify({ channels, state, crawling, error }), {
 			status: 200,
 			headers: {
 				'content-type': 'application/json',
 				// Browsers may reuse this briefly; the server cache does the real work.
-				'cache-control': 'public, max-age=60, stale-while-revalidate=300'
+				// Not while a crawl is running, or the page polling for the rest of the
+				// workspace would keep being handed the partial list it already has.
+				'cache-control': crawling
+					? 'no-store'
+					: 'public, max-age=60, stale-while-revalidate=300'
 			}
 		});
 	} catch (error) {

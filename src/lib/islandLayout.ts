@@ -27,22 +27,22 @@ export type PlacedChip = {
 };
 
 /**
- * Ceiling on chips rendered per island; the rest become a "+N more" count.
+ * Ceiling on chips shown per island on the full map.
  *
  * Islands are NEVER resized to fit more channels. Scaling them about their
  * centroids destroyed the 15px coastline separation the layout was verified
  * against — every island pair overlapped and chips from different islands
- * collided on screen. Extra channels are revealed by zooming into an island
- * instead, which enlarges its area on screen without moving any coastline.
+ * collided on screen. Extra channels are revealed by opening an island instead,
+ * where its contents can be dragged through page by page (islandTiles.ts).
  */
 export const MAX_CHIPS = 24;
 
 /**
- * Zooming into one island gives it the whole viewport, so far more fits.
+ * Most channels offered to one page of an opened island (see islandTiles.ts).
  *
- * Raised from 150 once the padding and gaps started scaling with the zoom:
- * geometry alone then fitted more than 150 into an opened island, so the old
- * ceiling silently became the limiter instead of the space.
+ * Not a visible limit: a page holds far fewer than this, and whatever doesn't
+ * fit simply starts the next page. It only bounds how much row fitting is done
+ * per page, so planning a zone of thousands stays cheap.
  */
 export const MAX_CHIPS_ZOOMED = 400;
 
@@ -488,61 +488,49 @@ function fitLabel(name: string, fontUnits: number, maxWidth: number) {
 export type PackResult = {
 	chips: PlacedChip[];
 	overflow: number;
-	/**
-	 * Full height of the packed canvas, measured from the label box's top so it
-	 * is directly comparable to the box the chips are positioned against. Equal
-	 * to the island's own height unless `grow` let the canvas outgrow it.
-	 */
-	contentHeight: number;
 };
 
 /**
  * Bands at the top and bottom of the label area that chips must keep clear.
  *
- * The zone title is pinned to the top of the area and the "+N more" badge to
- * the bottom. Packing across the full height put chips straight underneath both
- * — the heading became unreadable against the first row of chips.
+ * The zone title is pinned to the top of the area. Packing across the full
+ * height put chips straight underneath it — the heading became unreadable
+ * against the first row of chips.
  */
 export type Reserve = { top: number; bottom: number };
 
-export function packChips(
-	zoneKey: string,
-	channels: SlackChannel[],
-	fullArea: Rect,
-	fontUnits: number,
-	maxChips: number = MAX_CHIPS,
-	reserve: Reserve = { top: 0, bottom: 0 },
-	/**
-	 * Let the canvas grow to hold every chip instead of confining it to the
-	 * island. Used when an island is open and its contents can be dragged: there
-	 * is no page count, the canvas is simply as tall as the zone needs.
-	 */
-	grow: boolean = false
-): PackResult {
-	// Gaps scale with the font, so zooming in tightens them the same way it
-	// shrinks the chips. Derived once and passed down, so no helper can fall back
-	// on a full-map constant while packing a zoomed island.
-	const spacing = spacingFor(fontUnits);
+type RowItem = { channel: SlackChannel; label: string; w: number; h: number; tilt: number };
+type Row = { items: RowItem[]; w: number; h: number };
 
-	// Chips are laid out inside the area minus the reserved bands; callers still
-	// position them against `fullArea`, so the coordinates stay comparable.
-	const area: Rect = {
+/** The part of `fullArea` chips are laid out in, once the reserved bands are taken off. */
+function innerArea(fullArea: Rect, reserve: Reserve, fontUnits: number): Rect {
+	return {
 		x: fullArea.x,
 		y: fullArea.y + reserve.top,
 		width: fullArea.width,
 		height: Math.max(fontUnits * 2, fullArea.height - reserve.top - reserve.bottom)
 	};
+}
 
-	const visible = channels.slice(0, maxChips);
-	const overflow = channels.length - visible.length;
-
-	type Item = { channel: SlackChannel; label: string; w: number; h: number; tilt: number };
-	type Row = { items: Item[]; w: number; h: number };
-
+/**
+ * Break channels into rows that each fit the area's width, then keep as many
+ * rows as fit its height.
+ *
+ * Shared by packChips and countFitting so the two can never disagree about how
+ * many channels an area holds. That agreement is what lets islandTiles.ts hand
+ * each page exactly the channels it will place, so none fall between pages.
+ */
+function fitRows(
+	zoneKey: string,
+	channels: SlackChannel[],
+	area: Rect,
+	fontUnits: number,
+	spacing: Spacing
+) {
 	const rows: Row[] = [];
 	let row: Row = { items: [], w: 0, h: 0 };
 
-	for (const channel of visible) {
+	for (const channel of channels) {
 		const label = fitLabel(channel.name, fontUnits, area.width);
 		// Tilt is derived from the channel name alone, so it is known here, before
 		// anything is placed. Reserving each chip's own sweep rather than the
@@ -573,46 +561,67 @@ export function packChips(
 	}
 	if (row.items.length) rows.push(row);
 
-	// Nothing to place, so the canvas never outgrows the island.
-	if (!rows.length) return { chips: [], overflow, contentHeight: fullArea.height };
-
 	// A narrow island produces one chip per row, and those rows can easily exceed
-	// its height — `software` is only ~215 units wide. Drop the rows that do not
-	// fit and count them as overflow, rather than letting chips spill past the
-	// coastline.
+	// its height — `software` is only ~143 units wide. Drop the rows that do not
+	// fit rather than letting chips spill past the coastline. The first row is
+	// always kept, so every area places at least one chip.
+	const packHeight = area.height * (1 - SCATTER_SHARE);
 	let fitted = 0;
 	let usedHeight = 0;
-	let dropped = 0;
 
-
-	if (grow) {
-		// Nothing is dropped: every row is kept and the canvas is made as tall as
-		// they need, so dragging can reach the whole zone.
-		for (const r of rows) {
-			usedHeight = usedHeight ? usedHeight + spacing.y + r.h : r.h;
-		}
-		fitted = rows.length;
-	} else {
-		const packHeight = area.height * (1 - SCATTER_SHARE);
-
-		for (const r of rows) {
-			const next = usedHeight ? usedHeight + spacing.y + r.h : r.h;
-			if (next > packHeight && fitted > 0) break;
-			usedHeight = next;
-			fitted++;
-		}
+	for (const r of rows) {
+		const next = usedHeight ? usedHeight + spacing.y + r.h : r.h;
+		if (next > packHeight && fitted > 0) break;
+		usedHeight = next;
+		fitted++;
 	}
 
-	for (const r of rows.slice(fitted)) dropped += r.items.length;
 	rows.length = fitted;
+	return { rows, usedHeight };
+}
 
-	// Grow the canvas to hold the rows, keeping the same proportion of slack for
-	// the scatter that a fixed island gets. This has to happen before the slack is
-	// worked out: every later step — band and lead distribution, scramble,
-	// spreadEvenly — measures against area.height.
-	if (grow) {
-		area.height = Math.max(area.height, usedHeight / (1 - SCATTER_SHARE));
-	}
+/**
+ * How many channels, taken from the front of `channels`, packChips would place
+ * in `fullArea` with the same arguments.
+ *
+ * Runs only the row fitting, none of the scatter, so it is cheap enough to plan
+ * every page of a zone with thousands of channels up front.
+ */
+export function countFitting(
+	zoneKey: string,
+	channels: SlackChannel[],
+	fullArea: Rect,
+	fontUnits: number,
+	reserve: Reserve = { top: 0, bottom: 0 }
+) {
+	const spacing = spacingFor(fontUnits);
+	const area = innerArea(fullArea, reserve, fontUnits);
+	const { rows } = fitRows(zoneKey, channels, area, fontUnits, spacing);
+	return rows.reduce((count, r) => count + r.items.length, 0);
+}
+
+export function packChips(
+	zoneKey: string,
+	channels: SlackChannel[],
+	fullArea: Rect,
+	fontUnits: number,
+	maxChips: number = MAX_CHIPS,
+	reserve: Reserve = { top: 0, bottom: 0 }
+): PackResult {
+	// Gaps scale with the font, so a smaller chip font gets tighter gaps too.
+	// Derived once and passed down, so no helper can fall back on a full-map
+	// constant while packing an opened island.
+	const spacing = spacingFor(fontUnits);
+
+	// Chips are laid out inside the area minus the reserved bands; callers still
+	// position them against `fullArea`, so the coordinates stay comparable.
+	const area = innerArea(fullArea, reserve, fontUnits);
+
+	const visible = channels.slice(0, maxChips);
+	const { rows, usedHeight } = fitRows(zoneKey, visible, area, fontUnits, spacing);
+	const overflow = channels.length - rows.reduce((count, r) => count + r.items.length, 0);
+
+	if (!rows.length) return { chips: [], overflow };
 
 	const slackY = Math.max(0, area.height - usedHeight);
 
@@ -676,14 +685,12 @@ export function packChips(
 	// `area`, not `fullArea`, so the scatter cannot push a chip up under the zone
 	// title or down past the bottom edge.
 	// Both relaxation passes query and update the same grid, so the neighbour
-	// lookups stay cheap however many chips an open island holds.
+	// lookups stay cheap however many chips an area holds.
 	const grid = buildGrid(chips, area, spacing);
 	scramble(chips, area, zoneKey, grid);
 
 	// ...then even out what the random pass left clumped.
 	spreadEvenly(chips, area, grid);
 
-	const contentHeight = Math.max(fullArea.height, reserve.top + area.height + reserve.bottom);
-
-	return { chips, overflow: overflow + dropped, contentHeight };
+	return { chips, overflow };
 }

@@ -196,30 +196,41 @@ export type ChannelsResult = {
 	channels: SlackChannel[];
 	/** 'fresh' | 'stale' | 'miss' — surfaced for cache headers and debugging. */
 	state: 'fresh' | 'stale' | 'miss';
+	/**
+	 * True while a crawl is still walking the workspace, so `channels` is only
+	 * part of it. A page rendered from a cold start holds just the primed ~500;
+	 * this is what tells it to come back for the rest.
+	 */
+	crawling: boolean;
 	error?: string;
 };
 
 export async function getChannels(): Promise<ChannelsResult> {
 	const age = entry ? Date.now() - entry.at : Infinity;
+	// Read after any refresh below has started, so a request that kicks one off
+	// is told about it.
+	const crawling = () => inFlight !== null;
 
 	if (entry && age < FRESH_MS) {
-		return { channels: entry.channels, state: 'fresh' };
+		return { channels: entry.channels, state: 'fresh', crawling: crawling() };
 	}
 
 	if (entry && age < STALE_MS) {
 		// Serve what we have now; refresh without making this request wait.
 		void refresh().catch((error) => console.warn('channel refresh failed:', error));
-		return { channels: entry.channels, state: 'stale' };
+		return { channels: entry.channels, state: 'stale', crawling: crawling() };
 	}
 
 	try {
-		return { channels: await refresh(), state: 'miss' };
+		const channels = await refresh();
+		return { channels, state: 'miss', crawling: crawling() };
 	} catch (error) {
 		// A hard failure with an expired cache still beats an empty map.
 		if (entry) {
 			return {
 				channels: entry.channels,
 				state: 'stale',
+				crawling: crawling(),
 				error: error instanceof Error ? error.message : 'Slack request failed'
 			};
 		}

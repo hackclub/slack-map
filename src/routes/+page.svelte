@@ -52,11 +52,8 @@
 	let viewSeq = 0;
 
 	/**
-	 * Zone picked from the legend, which highlights that region and nothing more.
-	 *
-	 * Kept separate from `selectedChannel`: the legend used to open the modal for
-	 * whichever channel happened to sort first in the zone, which is not something
-	 * the reader asked for by clicking a category.
+	 * Zone the tour is pointing at, which highlights that region and nothing more.
+	 * Kept separate from `selectedChannel` so it never opens the modal.
 	 */
 	let highlightedZoneKey: string | null = null;
 
@@ -65,8 +62,6 @@
 	let modalLoading = false;
 	let modalError = '';
 
-	/** The legend panel, handed to the tour so it can spotlight it. */
-	let legendEl: HTMLElement | null = null;
 	let tourOpen = false;
 
 	type Zone = {
@@ -84,7 +79,7 @@
 			fill: '#4a7ba7',
 			stroke: '#7aa8d1',
 			// largest island — broad, gently lobed coast
-			path: 'M373 302C374 323 378 344 375 365C372 386 368 414 354 430C340 445 311 448 291 456C271 465 254 476 234 481C214 486 192 487 170 487C148 486 125 483 102 476C80 469 48 461 35 443C22 425 24 392 21 368C19 345 18 324 19 302C19 280 20 261 22 237C23 212 14 172 28 156C42 140 84 142 108 140C133 137 154 142 174 143C195 143 210 142 231 142C251 142 271 139 296 141C320 143 366 138 378 155C390 172 369 217 369 242C368 266 372 282 373 302'
+			path: 'M476 302C477 323 482 344 478 365C475 386 469 414 451 430C433 445 396 448 370 456C344 465 322 476 297 481C271 486 242 487 214 487C186 486 156 483 126 476C98 469 57 461 40 443C23 425 26 392 22 368C19 345 18 324 19 302C19 280 21 261 23 237C24 212 13 172 31 156C49 140 103 142 134 140C166 137 193 142 219 143C246 143 266 142 293 142C318 142 344 139 377 141C407 143 467 138 482 155C498 172 471 217 471 242C469 266 475 282 476 302'
 		},
 		{
 			key: 'ysws',
@@ -92,7 +87,7 @@
 			fill: '#2d8659',
 			stroke: '#5db876',
 			// a calm, near-circular mass
-			path: 'M651 324C652 340 653 352 657 373C660 394 678 432 671 449C663 467 631 471 612 481C592 491 575 501 554 510C532 519 506 539 484 537C462 534 439 511 422 496C405 480 385 463 380 442C375 422 388 391 390 371C393 352 396 340 395 324C394 308 386 293 385 274C385 256 385 236 391 214C396 193 402 159 419 147C435 135 467 139 489 142C511 145 528 162 549 166C570 169 598 153 614 162C631 171 642 198 647 218C653 237 647 260 647 278C648 296 649 308 651 324'
+			path: 'M834 324C836 340 837 352 842 373C846 394 869 432 860 449C850 467 809 471 784 481C758 491 736 501 709 510C681 519 647 539 619 537C591 534 561 511 539 496C517 480 491 463 485 442C478 422 495 391 498 371C502 352 506 340 504 324C503 308 493 293 491 274C491 256 491 236 499 214C506 193 513 159 535 147C556 135 597 139 625 142C654 145 676 162 703 166C730 169 766 153 787 162C809 171 823 198 829 218C837 237 829 260 829 278C831 296 832 308 834 324'
 		},
 		{
 			key: 'connect',
@@ -100,7 +95,7 @@
 			fill: '#556270',
 			stroke: '#8b93a1',
 			// widest island — a teardrop, fat in the east and tapering west
-			path: 'M475 644C474 668 473 690 469 714C465 739 467 776 450 789C432 802 387 793 363 794C339 795 322 795 304 796C285 796 269 796 250 796C231 796 214 796 190 795C165 794 131 800 104 790C77 780 40 760 26 736C12 712 21 675 21 644C21 614 12 577 27 553C41 530 79 510 107 502C135 494 172 505 196 504C220 502 231 498 250 492C269 486 287 472 308 469C329 467 355 467 374 476C394 484 406 506 423 522C439 538 465 552 474 573C482 593 475 621 475 644'
+			path: 'M607 644C606 668 605 690 600 714C594 739 597 776 575 789C552 802 494 793 463 794C432 795 410 795 387 796C362 796 342 796 317 796C293 796 271 796 240 795C208 794 164 800 129 790C94 780 46 760 28 736C10 712 22 675 22 644C22 614 10 577 30 553C48 530 97 510 133 502C169 494 217 505 248 504C279 502 293 498 317 492C342 486 365 472 392 469C419 467 453 467 477 476C503 484 518 506 540 522C561 538 594 552 606 573C616 593 607 621 607 644'
 		},
 		{
 			key: 'software',
@@ -108,7 +103,7 @@
 			fill: '#a68c2e',
 			stroke: '#d4b860',
 			// smallest island — a rounded triangle with three broad shoulders
-			path: 'M840 317C840 326 839 333 839 344C839 354 840 364 839 380C838 396 842 420 835 440C828 460 813 495 797 501C780 506 754 483 737 472C720 462 704 452 694 438C684 425 682 404 678 389C674 375 671 363 669 351C667 339 668 329 667 317C666 305 664 294 664 280C664 267 664 253 667 235C669 216 667 181 679 168C690 156 718 159 736 158C755 158 774 160 791 166C807 172 828 179 835 194C843 209 837 240 837 256C838 272 837 280 837 290C838 300 840 308 840 317'
+			path: 'M1078 317C1078 326 1077 333 1077 344C1077 354 1078 364 1077 380C1076 396 1081 420 1072 440C1063 460 1043 495 1023 501C1001 506 967 483 945 472C923 462 903 452 890 438C877 425 874 404 869 389C864 375 860 363 858 351C855 339 856 329 855 317C854 305 851 294 851 280C851 267 851 253 855 235C858 216 855 181 870 168C885 156 921 159 944 158C969 158 993 160 1015 166C1036 172 1063 179 1072 194C1082 209 1074 240 1074 256C1076 272 1074 280 1074 290C1076 300 1078 308 1078 317'
 		},
 		{
 			key: 'hardware',
@@ -116,17 +111,17 @@
 			fill: '#7a4d94',
 			stroke: '#b88dbf',
 			// a crescent, with a bay carved out of the north-west side
-			path: 'M838 652C839 673 841 693 839 716C837 739 842 776 827 789C811 802 769 793 746 794C723 795 707 795 689 796C671 796 656 796 639 796C621 795 605 795 582 794C559 793 517 802 501 789C485 776 487 740 486 717C485 694 493 673 494 652C496 631 489 609 495 591C501 572 516 553 531 540C546 528 566 522 584 513C601 505 616 497 635 490C654 482 677 466 696 468C715 471 731 493 750 503C769 513 795 516 809 530C824 545 832 569 837 589C842 609 838 631 838 652'
+			path: 'M1076 652C1077 673 1079 693 1077 716C1074 739 1081 776 1061 789C1041 802 987 793 957 794C927 795 907 795 883 796C860 796 841 796 819 796C796 795 775 795 745 794C716 793 662 802 641 789C620 776 623 740 622 717C620 694 631 673 632 652C634 631 625 609 633 591C641 572 660 553 680 540C699 528 725 522 748 513C770 505 789 497 814 490C838 482 868 466 892 468C917 471 938 493 962 503C987 513 1020 516 1038 530C1057 545 1068 569 1074 589C1081 609 1076 631 1076 652'
 		}
 	];
 
 	type IslandBounds = { minX: number; minY: number; width: number; height: number };
 	const islandBounds: Record<string, IslandBounds> = {
-		community: { minX: 19, minY: 139, width: 363, height: 348 },
-		ysws: { minX: 379, minY: 139, width: 294, height: 398 },
-		connect: { minX: 18, minY: 468, width: 460, height: 328 },
-		software: { minX: 664, minY: 158, width: 176, height: 343 },
-		hardware: { minX: 486, minY: 468, width: 354, height: 328 }
+		community: { minX: 19, minY: 139, width: 468, height: 348 },
+		ysws: { minX: 484, minY: 139, width: 379, height: 398 },
+		connect: { minX: 18, minY: 468, width: 593, height: 328 },
+		software: { minX: 851, minY: 158, width: 227, height: 343 },
+		hardware: { minX: 622, minY: 468, width: 457, height: 328 }
 	};
 
 	import type { PageData } from './$types.js';
@@ -179,11 +174,11 @@
 	// path changes, or chips will drift off the coastline.
 	type LabelArea = { x: number; y: number; width: number; height: number };
 	const labelAreas: Record<string, LabelArea> = {
-		community: { x: 28, y: 164, width: 326, height: 263 },
-		ysws: { x: 399, y: 192, width: 239, height: 273 },
-		connect: { x: 59, y: 535, width: 379, height: 228 },
-		software: { x: 689, y: 195, width: 143, height: 235 },
-		hardware: { x: 520, y: 555, width: 303, height: 237 }
+		community: { x: 31, y: 164, width: 420, height: 263 },
+		ysws: { x: 509, y: 192, width: 308, height: 273 },
+		connect: { x: 71, y: 535, width: 489, height: 228 },
+		software: { x: 883, y: 195, width: 184, height: 235 },
+		hardware: { x: 665, y: 555, width: 391, height: 237 }
 	};
 
 	/** The map's own coordinate space, which the label layer is laid out in. */
@@ -289,7 +284,7 @@
 	})();
 
 	/**
-	 * The region currently drawn as highlighted: whichever the legend picked, or
+	 * The region currently drawn as highlighted: whichever the tour picked, or
 	 * failing that the zone the open channel belongs to.
 	 */
 	$: selectedZoneKey =
@@ -451,7 +446,7 @@
 	}
 
 	async function selectChannel(channel: SlackChannel) {
-		// Opening a channel takes over the highlight, or the legend's pick would
+		// Opening a channel takes over the highlight, or the tour's pick would
 		// keep a different region lit than the one the channel lives in.
 		highlightedZoneKey = null;
 		selectedChannel = channel;
@@ -544,17 +539,6 @@
 							d="M0.04,0 L1,0 L1,1 C0.84,0.95 0.7,0.86 0.55,0.83 C0.38,0.79 0.24,0.66 0.13,0.55 C0.07,0.49 0.03,0.45 0,0.42 Z"
 						/>
 					</clipPath>
-					<clipPath id="lagoon-coast" clipPathUnits="objectBoundingBox">
-						<path
-							d="M0.24,0 L1,0 L1,1 L0,1 C0.05,0.87 0.02,0.75 0.05,0.63 C0.08,0.5 0.03,0.38 0.06,0.26 C0.09,0.15 0.15,0.07 0.24,0 Z"
-						/>
-					</clipPath>
-					<!-- narrow screens move the lagoon to the bottom, so it needs a horizontal coast -->
-					<clipPath id="lagoon-coast-bottom" clipPathUnits="objectBoundingBox">
-						<path
-							d="M0,0.2 C0.14,0.06 0.3,0.02 0.45,0.07 C0.62,0.13 0.8,0.03 1,0 L1,1 L0,1 Z"
-						/>
-					</clipPath>
 					<!--
 						Each island's own coastline, re-expressed in its label box's
 						objectBoundingBox units, so an opened island's chips are clipped to the
@@ -573,9 +557,12 @@
 			</svg>
 
 			<div class="top-wash" aria-hidden="true"></div>
-			<div class="side-lagoon" aria-hidden="true"></div>
 
 			<header class="map-header">
+				<button class="tour-replay" on:click={startTour}>
+					<img src="/orpheus-wave.png" alt="" width="427" height="585" />
+					Take the tour
+				</button>
 				<div>
 					<p class="kicker">Workspace atlas</p>
 					<h1 id="map-title">Slack Map</h1>
@@ -703,40 +690,11 @@
 				</button>
 			{/if}
 
-			<aside class="legend-panel">
-				<!-- bound to the nav, not the aside, so the tour frames the categories without the button -->
-				<nav class="legend" aria-label="Channel categories" bind:this={legendEl}>
-					{#each zones as zone}
-						<button
-							class:active={selectedZoneKey === zone.key}
-							class="legend-item"
-							aria-pressed={highlightedZoneKey === zone.key}
-							on:click={() => {
-								// Pressing the lit one again clears it, so the legend is a
-								// toggle rather than a one-way trip.
-								highlightedZoneKey = highlightedZoneKey === zone.key ? null : zone.key;
-							}}
-						>
-							<span
-								class="legend-dot"
-								style={`--dot-fill:${zone.fill}; --dot-stroke:${zone.stroke};`}
-							></span>
-							<span>{zone.label}</span>
-						</button>
-					{/each}
-				</nav>
-
-				<button class="tour-replay" on:click={startTour}>
-					<img src="/orpheus-wave.png" alt="" width="427" height="585" />
-					Take the tour
-				</button>
-			</aside>
 
 			{#if tourOpen}
 				<OnboardingTour
 					{zones}
 					{channels}
-					{legendEl}
 					paused={modalOpen}
 					on:highlight={(e) => (highlightedZoneKey = e.detail)}
 					on:select={(e) => selectChannel(e.detail)}
@@ -872,27 +830,14 @@
 		pointer-events: none;
 	}
 
-	.side-lagoon {
-		position: absolute;
-		top: 13%;
-		right: 0;
-		width: 23%;
-		height: 87%;
-		background: #9cd8e1;
-		clip-path: url(#lagoon-coast);
-		transition: opacity 0.3s ease;
-	}
-
-	.map-stage.zoomed-state .side-lagoon {
-		opacity: 0;
-		pointer-events: none;
-	}
-
 	.map-header {
 		position: absolute;
 		top: 1rem;
 		right: 2rem;
 		z-index: 3;
+		display: flex;
+		align-items: center;
+		gap: 1.25rem;
 		text-align: right;
 	}
 
@@ -1130,7 +1075,6 @@
 	}
 
 	.zone-channel,
-	.legend-item,
 	.refresh-button {
 		font: inherit;
 	}
@@ -1203,65 +1147,11 @@
 		color: rgba(255, 255, 255, 0.78);
 	}
 
-	.legend-panel {
-		position: absolute;
-		top: 22%;
-		right: 1rem;
-		z-index: 3;
-		/* widened to match the larger type; must stay inside the 23% lagoon band */
-		width: min(250px, 21%);
-		transition: opacity 0.3s ease;
-	}
-
-	.zone-labels.zoomed ~ .legend-panel {
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.legend {
-		display: grid;
-		gap: 0.95rem;
-	}
-
-	.legend-item {
-		display: flex;
-		align-items: center;
-		gap: 0.8rem;
-		border: 0;
-		padding: 0;
-		background: transparent;
-		color: #111317;
-		font-size: clamp(1.25rem, 1.7vw, 1.55rem);
-		font-weight: 800;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.legend-item.active {
-		transform: translateX(4px);
-	}
-
-	.legend-dot {
-		/* scaled with the label so the swatches don't look undersized beside it */
-		width: 1.6rem;
-		height: 1.6rem;
-		border-radius: 999px;
-		background: var(--dot-fill);
-		border: 3px solid var(--dot-stroke);
-		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
-		flex: none;
-	}
-
-	/*
-		Lives in the legend panel so it sits on the lagoon with the categories: the
-		same dark-on-light as the legend, instead of pale text fighting the gold wash
-		under the title.
-	*/
+	/* dark pill on the gold wash: pale text there would be hard to read */
 	.tour-replay {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.55rem;
-		margin-top: 1.5rem;
 		border: 0;
 		border-radius: 999px;
 		padding: 0.45rem 1.1rem 0.45rem 0.55rem;
@@ -1273,7 +1163,14 @@
 		box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
 		transition:
 			transform 0.15s ease,
-			background 0.15s ease;
+			background 0.15s ease,
+			opacity 0.3s ease;
+	}
+
+	/* the gold wash fades out with an island open, and the pill would float on the island */
+	.map-stage.zoomed-state .tour-replay {
+		opacity: 0;
+		pointer-events: none;
 	}
 
 	.tour-replay img {
@@ -1329,16 +1226,6 @@
 		.map-stage {
 			min-height: 700px;
 		}
-
-		.legend-panel {
-			top: 18%;
-			right: 0.9rem;
-			width: min(215px, 22%);
-		}
-
-		.legend {
-			gap: 0.6rem;
-		}
 	}
 
 	@media (max-width: 720px) {
@@ -1351,50 +1238,23 @@
 			height: 14%;
 		}
 
-		.side-lagoon {
-			top: auto;
-			bottom: 0;
-			width: 100%;
-			height: 24%;
-			clip-path: url(#lagoon-coast-bottom);
-		}
-
+		/* no room beside the title on a phone, so the button drops below it */
 		.map-header {
 			top: 1.25rem;
 			right: 1.25rem;
+			flex-direction: column-reverse;
+			align-items: flex-end;
+			gap: 0.45rem;
 		}
 
-
-		.legend-panel {
-			top: auto;
-			right: 1rem;
-			left: 1rem;
-			bottom: 1rem;
-			width: auto;
-		}
-
-		.legend {
-			grid-template-columns: 1fr 1fr;
-			gap: 0.8rem 1rem;
-		}
-
-		/*
-			Five categories in two columns leave the right column's third row empty.
-			The button takes that slot rather than adding a row, which would push the
-			legend further up over the islands.
-		*/
 		.tour-replay {
-			position: absolute;
-			right: 0;
-			bottom: 0;
-			margin-top: 0;
 			font-size: 0.85rem;
 		}
 
 		.map-error {
 			left: 1rem;
 			right: 1rem;
-			bottom: 5.8rem;
+			bottom: 1rem;
 			max-width: none;
 			border-radius: 22px;
 			flex-direction: column;

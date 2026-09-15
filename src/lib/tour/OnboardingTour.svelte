@@ -3,7 +3,7 @@
 	import { fade, fly } from 'svelte/transition';
 	import type { SlackChannel } from '../slack.js';
 	import Mascot from './Mascot.svelte';
-	import { TOUR_STEPS, type TourTarget } from './steps.js';
+	import { TOUR_STEPS } from './steps.js';
 	import { HOBBIES, suggestChannels, type Suggestion } from './hobbies.js';
 	import { loadHobbies, markTourSeen, saveHobbies } from './storage.js';
 
@@ -11,8 +11,6 @@
 
 	export let zones: ZoneShape[];
 	export let channels: SlackChannel[];
-	/** The legend panel, so the tour can frame it. */
-	export let legendEl: HTMLElement | null = null;
 	/** True while the channel modal sits on top; keyboard shortcuts belong to it then. */
 	export let paused = false;
 
@@ -22,19 +20,12 @@
 		close: void;
 	}>();
 
-	/**
-	 * The overlay shares the terrain's 1100x800 viewBox, so an island's own path
-	 * can be used as the spotlight hole. That only lines up while the map is fully
-	 * zoomed out, which is why the page resets the view before opening the tour.
-	 */
-	const WORLD = { width: 1100, height: 800 };
 	const TYPE_MS = 22;
 
 	// Only ever mounted from onMount on the page, so window is always there.
 	const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 	let index = 0;
-	let overlayEl: SVGSVGElement | null = null;
 	let primaryBtn: HTMLButtonElement | null = null;
 
 	const saved = loadHobbies();
@@ -81,31 +72,6 @@
 	$: zoneKey = step.target?.type === 'zone' ? step.target.key : null;
 	$: zonePath = zones.find((zone) => zone.key === zoneKey)?.path ?? null;
 	$: dispatch('highlight', zoneKey);
-
-	let focusRect: { x: number; y: number; width: number; height: number } | null = null;
-
-	/**
-	 * The legend is HTML, not part of the map, so its on-screen box is converted
-	 * into viewBox units. The arguments are passed in rather than read from the
-	 * outer scope so the `$:` call below tracks them.
-	 */
-	function measure(target: TourTarget, el: HTMLElement | null, overlay: SVGSVGElement | null) {
-		if (target?.type !== 'legend' || !el || !overlay) {
-			focusRect = null;
-			return;
-		}
-		const stage = overlay.getBoundingClientRect();
-		const box = el.getBoundingClientRect();
-		const pad = 14;
-		focusRect = {
-			x: ((box.left - stage.left - pad) / stage.width) * WORLD.width,
-			y: ((box.top - stage.top - pad) / stage.height) * WORLD.height,
-			width: ((box.width + pad * 2) / stage.width) * WORLD.width,
-			height: ((box.height + pad * 2) / stage.height) * WORLD.height
-		};
-	}
-
-	$: measure(step.target, legendEl, overlayEl);
 
 	// --- navigation -----------------------------------------------------------
 
@@ -155,15 +121,18 @@
 	}
 </script>
 
-<svelte:window on:keydown={onKey} on:resize={() => measure(step.target, legendEl, overlayEl)} />
+<svelte:window on:keydown={onKey} />
 
 <!--
+	The overlay shares the terrain's 1100x800 viewBox, so an island's own path
+	can be used as the spotlight hole. That only lines up while the map is fully
+	zoomed out, which is why the page resets the view before opening the tour.
+
 	Covers the whole map, holes included: SVG masks don't affect hit-testing, so
 	the map can't be panned or zoomed out from under the spotlight mid-tour.
 -->
 <svg
 	class="tour-dim"
-	bind:this={overlayEl}
 	viewBox="0 0 1100 800"
 	preserveAspectRatio="none"
 	aria-hidden="true"
@@ -175,19 +144,15 @@
 			{#if zonePath}
 				<!-- the black stroke widens the hole a little past the coastline -->
 				<path d={zonePath} fill="#000" stroke="#000" stroke-width="18" stroke-linejoin="round" />
-			{:else if focusRect}
-				<rect {...focusRect} rx="14" fill="#000" />
 			{/if}
 		</mask>
 	</defs>
 
 	<rect width="1100" height="800" class="dim" mask="url(#tour-spotlight)" />
 
-	{#key zoneKey ?? step.target?.type}
+	{#key zoneKey}
 		{#if zonePath}
 			<path class="glow" d={zonePath} stroke-width="18" in:fade={{ duration: 300 }} />
-		{:else if focusRect}
-			<rect class="glow" {...focusRect} rx="14" stroke-width="6" in:fade={{ duration: 300 }} />
 		{/if}
 	{/key}
 </svg>

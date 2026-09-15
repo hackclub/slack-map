@@ -102,7 +102,7 @@ export function panzoom(node: SVGSVGElement, options: PanZoomOptions) {
 	 * Controls that must keep their own press behaviour rather than starting a
 	 * drag. Everything else over the map is fair game, chips included.
 	 */
-	const NO_DRAG = '.legend-panel, .map-header, .zoom-close, .hackclub-flag, .channel-modal';
+	const NO_DRAG = '.map-header, .zoom-close, .hackclub-flag, .channel-modal';
 
 	function onPointerDown(event: PointerEvent) {
 		// Tracked even when the island has nowhere to go. A zone small enough to

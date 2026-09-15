@@ -1,6 +1,6 @@
 export type Mood = 'idle' | 'wave' | 'point' | 'think' | 'cheer';
 
-export type TourTarget = { type: 'zone'; key: string } | { type: 'legend' } | null;
+export type TourTarget = { type: 'zone'; key: string } | null;
 
 export type TourStep = {
 	id: string;
@@ -58,13 +58,6 @@ export const TOUR_STEPS: TourStep[] = [
 		target: { type: 'zone', key: 'connect' },
 		mood: 'point',
 		side: 'right'
-	},
-	{
-		id: 'legend',
-		text: 'Lost? Tap any of these to light up its island on the map.',
-		target: { type: 'legend' },
-		mood: 'point',
-		side: 'left'
 	},
 	{
 		id: 'explore',
